@@ -1,0 +1,40 @@
+# Bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.coverage
+htmlcov/
+
+# Packaging and build output
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local configuration
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# Local input logs/data
+data/
+
+# Generated analysis artifacts
+stats_viz/
+
+# Editor and OS noise
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db
