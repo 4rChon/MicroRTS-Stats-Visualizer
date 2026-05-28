@@ -568,17 +568,21 @@ def add_derived_episode_metrics(episode_df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def load_precomputed_tables(data_dir_text: str) -> dict[str, pd.DataFrame]:
+def load_episode_tables(data_dir_text: str) -> dict[str, pd.DataFrame]:
     data_dir = Path(data_dir_text).expanduser()
     episode_df = add_derived_episode_metrics(read_table(data_dir, "episode_summary"))
-    time_df = read_table(data_dir, "timeseries")
     return {
         "episode": episode_df,
-        "time": time_df,
         "summary_by_enemy": read_optional_csv(data_dir / "summary_by_enemy.csv"),
         "selected_correlations": read_optional_csv(data_dir / "selected_correlations_by_enemy.csv"),
         "correlation_matrix": read_optional_csv(data_dir / "overall" / "correlation_matrix.csv"),
     }
+
+
+@st.cache_data(show_spinner="Loading time series data...")
+def load_timeseries_table(data_dir_text: str) -> pd.DataFrame:
+    data_dir = Path(data_dir_text).expanduser()
+    return read_table(data_dir, "timeseries")
 
 
 def require_columns(df: pd.DataFrame, columns: list[str], table_name: str) -> None:
@@ -769,8 +773,7 @@ def render_overview(episode_df: pd.DataFrame, summary_by_enemy: pd.DataFrame) ->
         st.dataframe(summary_by_enemy, use_container_width=True, hide_index=True)
 
 
-def render_key_statistics(episode_df: pd.DataFrame, time_df: pd.DataFrame) -> None:
-    _ = time_df
+def render_key_statistics(episode_df: pd.DataFrame) -> None:
     associations = build_outcome_associations(episode_df)
     separations = build_win_loss_separations(episode_df)
     metric_correlations = build_metric_correlations(episode_df)
@@ -1614,7 +1617,7 @@ def render_trajectory_inference(time_df: pd.DataFrame) -> None:
         st.dataframe(trajectory_df[preview_cols].head(500), use_container_width=True, hide_index=True)
 
 
-def render_inference(episode_df: pd.DataFrame, time_df: pd.DataFrame) -> None:
+def render_inference(episode_df: pd.DataFrame, data_dir: str, episode_ids: set) -> None:
     inference_mode = st.segmented_control(
         "Inference mode",
         ["Episode-level", "Trajectory"],
@@ -1624,6 +1627,9 @@ def render_inference(episode_df: pd.DataFrame, time_df: pd.DataFrame) -> None:
     if inference_mode == "Episode-level":
         render_episode_level_inference(episode_df)
     else:
+        time_df = load_timeseries_table(data_dir)
+        require_columns(time_df, ["episode_id", "enemy", "t", "progress"], "timeseries")
+        time_df = time_df[time_df["episode_id"].isin(episode_ids)].copy()
         render_trajectory_inference(time_df)
 
 
@@ -1650,15 +1656,13 @@ def main() -> None:
         st.caption("Reads Parquet when present, otherwise CSV. Raw episode logs are not parsed here.")
 
     try:
-        tables = load_precomputed_tables(data_dir)
+        tables = load_episode_tables(data_dir)
     except Exception as e:
         st.error(f"Could not load precomputed tables: {e}")
         st.stop()
 
     episode_df = tables["episode"]
-    time_df = tables["time"]
     require_columns(episode_df, ["episode_id", "enemy", "win", "duration"], "episode_summary")
-    require_columns(time_df, ["episode_id", "enemy", "t", "progress"], "timeseries")
 
     with st.sidebar:
         enemies = sorted(episode_df["enemy"].astype(str).dropna().unique())
@@ -1670,26 +1674,34 @@ def main() -> None:
 
     filtered_episode_df = apply_episode_filters(episode_df, selected_enemies, outcome, duration_range)
     episode_ids = set(filtered_episode_df["episode_id"])
-    filtered_time_df = time_df[time_df["episode_id"].isin(episode_ids)].copy()
 
     if filtered_episode_df.empty:
         st.warning("No episodes match the current filters.")
         st.stop()
 
-    tabs = st.tabs(["Overview", "Key Statistics", "Time Series", "Correlations", "Inference", "Methods", "Episodes"])
-    with tabs[0]:
+    active_view = st.segmented_control(
+        "View",
+        ["Overview", "Key Statistics", "Time Series", "Correlations", "Inference", "Methods", "Episodes"],
+        default="Overview",
+        label_visibility="collapsed",
+    )
+
+    if active_view == "Overview":
         render_overview(filtered_episode_df, tables["summary_by_enemy"])
-    with tabs[1]:
-        render_key_statistics(filtered_episode_df, filtered_time_df)
-    with tabs[2]:
+    elif active_view == "Key Statistics":
+        render_key_statistics(filtered_episode_df)
+    elif active_view == "Time Series":
+        time_df = load_timeseries_table(data_dir)
+        require_columns(time_df, ["episode_id", "enemy", "t", "progress"], "timeseries")
+        filtered_time_df = time_df[time_df["episode_id"].isin(episode_ids)].copy()
         render_time_series(filtered_time_df)
-    with tabs[3]:
+    elif active_view == "Correlations":
         render_correlations(filtered_episode_df, tables["selected_correlations"], tables["correlation_matrix"])
-    with tabs[4]:
-        render_inference(filtered_episode_df, filtered_time_df)
-    with tabs[5]:
+    elif active_view == "Inference":
+        render_inference(filtered_episode_df, data_dir, episode_ids)
+    elif active_view == "Methods":
         render_methods_reference()
-    with tabs[6]:
+    elif active_view == "Episodes":
         render_episode_explorer(filtered_episode_df)
 
 
