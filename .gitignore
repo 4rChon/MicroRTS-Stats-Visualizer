@@ -29,8 +29,15 @@ env/
 # Local input logs/data
 data/
 
-# Generated analysis artifacts
-stats_viz/
+# Generated stats output: keep only the compact runtime files needed by Streamlit.
+stats_viz/**
+!stats_viz/
+!stats_viz/overall/
+!stats_viz/episode_summary.parquet
+!stats_viz/timeseries.parquet
+!stats_viz/summary_by_enemy.csv
+!stats_viz/selected_correlations_by_enemy.csv
+!stats_viz/overall/correlation_matrix.csv
 
 # Editor and OS noise
 .idea/
