@@ -104,6 +104,63 @@ def test_normalized_time_series_is_episode_weighted() -> None:
     assert agg.iloc[0]["mean"] == 50
 
 
+class _FakeOptionContainer:
+    def __init__(self, selected: str):
+        self.selected = selected
+        self.calls: list[dict] = []
+
+    def selectbox(self, label, options, index=0, format_func=str, key=None):
+        self.calls.append(
+            {
+                "label": label,
+                "options": list(options),
+                "index": index,
+                "format_func": format_func,
+                "key": key,
+            }
+        )
+        return self.selected
+
+
+def test_option_picker_uses_selectbox_with_raw_metric_names_and_labels() -> None:
+    container = _FakeOptionContainer("infrastructure_value")
+
+    selected = dashboard.option_picker(
+        container,
+        "Metric",
+        ["army_value", "infrastructure_value"],
+        format_func=lambda value: dashboard.METRIC_LABELS[value],
+    )
+
+    assert selected == "infrastructure_value"
+    assert container.calls[0]["options"] == ["army_value", "infrastructure_value"]
+    assert container.calls[0]["format_func"]("infrastructure_value") == "Infrastructure value"
+
+
+def test_time_series_handles_infrastructure_value_metric() -> None:
+    time_df = pd.DataFrame(
+        {
+            "episode_id": ["e1", "e1", "e2", "e2"],
+            "enemy": ["a", "a", "a", "a"],
+            "t": [0, 1, 0, 1],
+            "progress": [0.0, 1.0, 0.0, 1.0],
+            "infrastructure_value": [10, 15, 10, 5],
+        }
+    )
+
+    agg = dashboard.aggregate_time_series(
+        time_df,
+        "infrastructure_value",
+        "Timesteps",
+        cumulative=False,
+        bins=10,
+    )
+    fig = dashboard.plot_time_series(agg, "Infrastructure value", "Timesteps")
+
+    assert agg["mean"].tolist() == [10.0, 10.0]
+    assert len(fig.data) == 3
+
+
 def test_same_metric_correlation_returns_not_run() -> None:
     result = inference.correlation_tests(pd.DataFrame({"x": [1, 2, 3]}), "x", "x")
 

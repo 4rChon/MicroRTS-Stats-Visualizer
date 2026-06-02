@@ -379,27 +379,19 @@ def option_picker(
     index: int = 0,
     format_func: Any = str,
     key: str | None = None,
-    horizontal: bool = False,
 ) -> str:
-    """Render a single-choice widget without Streamlit's selectbox frontend chunk.
-
-    Streamlit Cloud has intermittently failed to serve the dynamically imported
-    Selectbox JavaScript module, which leaves selectboxes stuck on their default
-    values. Radio buttons are statically loaded in this app and keep the same
-    single-choice behavior without relying on that failing chunk.
-    """
+    """Render a single-choice dropdown widget."""
     safe_options = list(options)
     if not safe_options:
         raise ValueError(f"No options available for {label!r}")
 
     safe_index = min(max(index, 0), len(safe_options) - 1)
-    return container.radio(
+    return container.selectbox(
         label,
         safe_options,
         index=safe_index,
         format_func=format_func,
         key=key,
-        horizontal=horizontal,
     )
 
 
@@ -1793,7 +1785,6 @@ def render_trajectory_inference(data_dir: str, episode_ids: set[str]) -> None:
         "Group by",
         ["Outcome", "Enemy"],
         key="trajectory_grouping",
-        horizontal=True,
     )
     bins = controls[2].slider("Progress bins", 5, 30, 10, key="trajectory_bins")
     summary = option_picker(
@@ -1890,7 +1881,7 @@ def main() -> None:
     with st.sidebar:
         enemies = sorted(episode_df["enemy"].astype(str).dropna().unique())
         selected_enemies = st.multiselect("Enemies", enemies, default=enemies)
-        outcome = st.radio("Outcome", ["All", "Wins", "Losses", "Draws"], horizontal=True)
+        outcome = st.selectbox("Outcome", ["All", "Wins", "Losses", "Draws"])
         duration_min = int(episode_df["duration"].min())
         duration_max = int(episode_df["duration"].max())
         duration_range = st.slider("Duration", duration_min, duration_max, (duration_min, duration_max))
