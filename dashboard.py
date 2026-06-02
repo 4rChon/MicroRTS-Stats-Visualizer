@@ -1415,6 +1415,22 @@ def render_time_series(data_dir: str, episode_ids: set[str]) -> None:
         return
     st.plotly_chart(plot_time_series(agg, metric_label, x_mode), width="stretch")
 
+    download_cols = st.columns([1, 1])
+    with download_cols[0]:
+        download_dynamic_table_csv(
+            agg,
+            "Download aggregated time series CSV",
+            f"time_series_{metric}_aggregated.csv",
+            key="download_aggregated_time_series_csv",
+        )
+    with download_cols[1]:
+        download_dynamic_table_csv(
+            time_df[list(required_columns)].sort_values(["enemy", "episode_id", "t"]),
+            "Download filtered time series rows CSV",
+            f"time_series_{metric}_filtered_rows.csv",
+            key="download_filtered_time_series_rows_csv",
+        )
+
 
 def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.DataFrame, matrix_df: pd.DataFrame) -> None:
     left, middle, right = st.columns([1, 1, 1])
