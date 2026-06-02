@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
+import os
+import traceback
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import psutil
 import pyarrow.parquet as pq
 import streamlit as st
 
@@ -23,6 +26,9 @@ from inference import (
 
 
 DEFAULT_DATA_DIR = Path("stats_viz")
+MAX_SAFE_MB = 1800
+MAX_POINTS = 20_000
+PROCESS = psutil.Process(os.getpid())
 
 METRIC_LABELS = {
     "resources_gathered": "Resources gathered",
@@ -367,6 +373,97 @@ st.set_page_config(
 )
 
 
+def mem_mb() -> float:
+    """Return the current process RSS in MiB for Streamlit Cloud diagnostics."""
+    return PROCESS.memory_info().rss / 1024 / 1024
+
+
+def abort_if_memory_high(where: str) -> None:
+    current = mem_mb()
+    if current > MAX_SAFE_MB:
+        st.error(f"Aborting at {where}: memory is already {current:.1f} MB.")
+        print(f"[MEMORY ABORT] {where} | memory={current:.1f} MB", flush=True)
+        st.stop()
+
+
+def log_stat_start(stat_name: str) -> float:
+    before = mem_mb()
+    print(f"[STAT START] {stat_name} | memory={before:.1f} MB", flush=True)
+    return before
+
+
+def log_stat_end(stat_name: str, before: float) -> None:
+    after = mem_mb()
+    print(
+        f"[STAT END] {stat_name} | memory={after:.1f} MB | delta={after - before:.1f} MB",
+        flush=True,
+    )
+
+
+def render_stat_guard(stat_name: str, renderer: Callable[[], None]) -> None:
+    st.subheader(stat_name)
+    before = log_stat_start(stat_name)
+    try:
+        abort_if_memory_high(f"before {stat_name}")
+        renderer()
+        abort_if_memory_high(f"after {stat_name}")
+    except Exception:
+        trace = traceback.format_exc()
+        st.error(f"Failed to render {stat_name}")
+        with st.expander("Traceback"):
+            st.code(trace)
+        print(f"[STAT ERROR] {stat_name}", flush=True)
+        print(trace, flush=True)
+    finally:
+        log_stat_end(stat_name, before)
+
+
+def select_stats(available_stats: list[str]) -> list[str]:
+    available_stats = sorted(set(available_stats))
+    previous = st.session_state.get("selected_stats_value", [])
+    default = [stat for stat in previous if stat in available_stats]
+    if not default and available_stats:
+        default = [available_stats[0]]
+
+    selected = st.multiselect(
+        "Stats to show",
+        options=available_stats,
+        default=default,
+    )
+    selected = [stat for stat in selected if stat in available_stats]
+    st.session_state["selected_stats_value"] = selected
+    return selected
+
+
+def get_stat_dataframe(stats_df: pd.DataFrame | None, stat_name: str) -> pd.DataFrame | None:
+    if stats_df is None:
+        raise ValueError("stats_df is None")
+    if stats_df.empty:
+        return stats_df
+    if stat_name not in stats_df.columns:
+        return None
+
+    stat_df = stats_df[[stat_name]].copy()
+    stat_df[stat_name] = pd.to_numeric(stat_df[stat_name], errors="coerce")
+    stat_df = stat_df.replace([np.inf, -np.inf], np.nan).dropna(subset=[stat_name])
+    return stat_df
+
+
+def downsample_by_index(df: pd.DataFrame, max_points: int = MAX_POINTS) -> pd.DataFrame:
+    if len(df) <= max_points:
+        return df
+
+    step = max(1, len(df) // max_points)
+    return df.iloc[::step].copy()
+
+
+def cap_plot_df(df: pd.DataFrame, stat_name: str, max_points: int = MAX_POINTS) -> pd.DataFrame:
+    if len(df) > max_points:
+        st.warning(f"{stat_name} has {len(df):,} rows. Showing {max_points:,} sampled rows.")
+        return df.sample(max_points, random_state=0).sort_index()
+    return df
+
+
 def clean_label(value: str) -> str:
     return value.replace("_", " ").title()
 
@@ -384,6 +481,9 @@ def option_picker(
     safe_options = list(options)
     if not safe_options:
         raise ValueError(f"No options available for {label!r}")
+
+    if key and st.session_state.get(key) not in (None, *safe_options):
+        del st.session_state[key]
 
     safe_index = min(max(index, 0), len(safe_options) - 1)
     return container.selectbox(
@@ -629,9 +729,9 @@ def read_table(
     parquet_path = data_dir / f"{stem}.parquet"
     csv_path = data_dir / f"{stem}.csv"
     if parquet_path.exists():
-        return pd.read_parquet(parquet_path, columns=columns, filters=filters)
+        return pd.read_parquet(parquet_path, columns=columns, filters=filters).copy()
     if csv_path.exists():
-        df = pd.read_csv(csv_path, usecols=list(columns) if columns is not None else None)
+        df = pd.read_csv(csv_path, usecols=list(columns) if columns is not None else None).copy()
         if filters:
             for column, operator, values in filters:
                 if operator == "in" and column in df.columns:
@@ -654,9 +754,9 @@ def read_optional_table(data_dir: Path, stem: str) -> pd.DataFrame:
     parquet_path = data_dir / f"{stem}.parquet"
     csv_path = data_dir / f"{stem}.csv"
     if parquet_path.exists():
-        return pd.read_parquet(parquet_path)
+        return pd.read_parquet(parquet_path).copy()
     if csv_path.exists():
-        df = pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path).copy()
         if stem == "correlation_matrix" and not df.empty:
             index_col = "metric" if "metric" in df.columns else df.columns[0]
             if index_col == "metric" or str(index_col).startswith("Unnamed:"):
@@ -697,7 +797,7 @@ def load_episode_tables(data_dir_text: str) -> dict[str, pd.DataFrame]:
 @st.cache_data(show_spinner=False)
 def load_timeseries_columns(data_dir_text: str) -> list[str]:
     data_dir = Path(data_dir_text).expanduser()
-    return get_table_columns(data_dir, "timeseries")
+    return list(get_table_columns(data_dir, "timeseries"))
 
 
 @st.cache_data(show_spinner="Loading time series data...")
@@ -708,7 +808,7 @@ def load_timeseries_table(
 ) -> pd.DataFrame:
     data_dir = Path(data_dir_text).expanduser()
     filters = [("episode_id", "in", list(episode_ids))] if episode_ids is not None else None
-    return read_table(data_dir, "timeseries", columns=columns, filters=filters)
+    return read_table(data_dir, "timeseries", columns=columns, filters=filters).copy()
 
 
 def require_columns(df: pd.DataFrame, columns: list[str], table_name: str) -> None:
@@ -1205,14 +1305,37 @@ def render_time_series(data_dir: str, episode_ids: set[str]) -> None:
         st.warning("No time-series rows match the current filters.")
         return
 
+    metric_df = get_stat_dataframe(time_df, metric)
+    if metric_df is None or metric_df.empty:
+        st.info(f"No numeric values are available for {METRIC_LABELS.get(metric, clean_label(metric))}.")
+        return
+
+    time_df = time_df.copy()
+    time_df[metric] = pd.to_numeric(time_df[metric], errors="coerce")
+    time_df = time_df.dropna(subset=[metric])
+    if time_df.empty:
+        st.info(f"No numeric time-series rows remain for {METRIC_LABELS.get(metric, clean_label(metric))}.")
+        return
+
     metric_label = METRIC_LABELS.get(metric, clean_label(metric))
     agg = aggregate_time_series(time_df, metric, x_mode, cumulative, bins)
+    agg = downsample_by_index(agg, MAX_POINTS)
+    if agg.empty:
+        st.info(f"No aggregated time-series values are available for {metric_label}.")
+        return
     st.plotly_chart(plot_time_series(agg, metric_label, x_mode), width="stretch")
 
 
 def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.DataFrame, matrix_df: pd.DataFrame) -> None:
     left, middle, right = st.columns([1, 1, 1])
-    numeric_cols = [col for col in EPISODE_SCATTER_COLUMNS if col in episode_df.columns]
+    numeric_cols = [
+        col
+        for col in EPISODE_SCATTER_COLUMNS
+        if col in episode_df.columns and get_stat_dataframe(episode_df, col) is not None and not get_stat_dataframe(episode_df, col).empty
+    ]
+    if len(numeric_cols) < 2:
+        st.info("At least two numeric episode metrics are required for correlation plots.")
+        return
 
     with left:
         x_col = option_picker(
@@ -1254,6 +1377,13 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
     labels = {x_col: EPISODE_SCATTER_COLUMNS[x_col], y_col: EPISODE_SCATTER_COLUMNS[y_col]}
     hover_data = ["episode_id", "duration", "result"]
     plot_df = episode_df.copy()
+    plot_df[x_col] = pd.to_numeric(plot_df[x_col], errors="coerce")
+    plot_df[y_col] = pd.to_numeric(plot_df[y_col], errors="coerce")
+    plot_df = plot_df.replace([np.inf, -np.inf], np.nan).dropna(subset=[x_col, y_col])
+    if plot_df.empty:
+        st.info(f"No valid numeric rows are available for {EPISODE_SCATTER_COLUMNS[x_col]} vs {EPISODE_SCATTER_COLUMNS[y_col]}.")
+        return
+
     if plot_kind in {"Line", "Box", "Violin"}:
         if use_binned_x:
             bin_col = f"{x_col}_bin"
@@ -1341,6 +1471,7 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
             if use_binned_x:
                 fig.update_xaxes(type="category")
         elif plot_kind == "Box":
+            plot_df = cap_plot_df(plot_df, f"{EPISODE_SCATTER_COLUMNS[y_col]} by {EPISODE_SCATTER_COLUMNS[x_col]}")
             fig = px.box(
                 plot_df,
                 x=bin_col,
@@ -1351,6 +1482,7 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
                 labels=labels,
             )
         else:
+            plot_df = cap_plot_df(plot_df, f"{EPISODE_SCATTER_COLUMNS[y_col]} by {EPISODE_SCATTER_COLUMNS[x_col]}")
             fig = px.violin(
                 plot_df,
                 x=bin_col,
@@ -1365,6 +1497,7 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
     else:
         corr = pearsonr_safe(plot_df[x_col], plot_df[y_col])
         st.metric("Pearson r", format_number(corr))
+        plot_df = cap_plot_df(plot_df, f"{EPISODE_SCATTER_COLUMNS[x_col]} vs {EPISODE_SCATTER_COLUMNS[y_col]}")
         fig = px.scatter(
             plot_df,
             x=x_col,
@@ -1408,6 +1541,9 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
 
 def render_episode_explorer(episode_df: pd.DataFrame) -> None:
     cols = [col for col in EPISODE_SCATTER_COLUMNS if col in episode_df.columns]
+    if not cols:
+        st.info("No episode-level metrics are available for exploration.")
+        return
     metric = option_picker(
         st,
         "Distribution metric",
@@ -1415,8 +1551,9 @@ def render_episode_explorer(episode_df: pd.DataFrame) -> None:
         format_func=lambda value: EPISODE_SCATTER_COLUMNS[value],
         key="episode_distribution_metric",
     )
+    plot_df = cap_plot_df(episode_df, EPISODE_SCATTER_COLUMNS[metric])
     fig = px.box(
-        episode_df,
+        plot_df,
         x="enemy",
         y=metric,
         color="enemy",
@@ -1834,6 +1971,25 @@ def render_trajectory_inference(data_dir: str, episode_ids: set[str]) -> None:
         st.dataframe(trajectory_df[preview_cols].head(500), width="stretch", hide_index=True)
 
 
+def available_dashboard_stats(tables: dict[str, pd.DataFrame], timeseries_columns: list[str]) -> list[str]:
+    episode_df = tables["episode"]
+    stats: list[str] = []
+    if {"episode_id", "enemy", "win", "duration"}.issubset(episode_df.columns):
+        stats.append("Overview")
+    if numeric_episode_columns(episode_df):
+        stats.append("Key Statistics")
+    if any(metric in timeseries_columns for metric in METRIC_LABELS):
+        stats.append("Time Series")
+    if len([col for col in EPISODE_SCATTER_COLUMNS if col in episode_df.columns]) >= 2:
+        stats.append("Correlations")
+    if {"enemy", "win"}.issubset(episode_df.columns) and numeric_episode_columns(episode_df):
+        stats.append("Inference")
+    if not episode_df.empty:
+        stats.append("Episodes")
+    stats.append("Methods")
+    return stats
+
+
 def render_inference(episode_df: pd.DataFrame, data_dir: str, episode_ids: set) -> None:
     inference_mode = st.segmented_control(
         "Inference mode",
@@ -1870,12 +2026,12 @@ def main() -> None:
         st.caption("Reads Parquet tables by default, with CSV fallback for exported or legacy tables.")
 
     try:
-        tables = load_episode_tables(data_dir)
+        tables = {name: table.copy() for name, table in load_episode_tables(data_dir).items()}
     except Exception as e:
         st.error(f"Could not load precomputed tables: {e}")
         st.stop()
 
-    episode_df = tables["episode"]
+    episode_df = tables["episode"].copy()
     require_columns(episode_df, ["episode_id", "enemy", "win", "duration"], "episode_summary")
 
     with st.sidebar:
@@ -1893,27 +2049,43 @@ def main() -> None:
         st.warning("No episodes match the current filters.")
         st.stop()
 
-    active_view = st.segmented_control(
-        "View",
-        ["Overview", "Key Statistics", "Time Series", "Correlations", "Inference", "Methods", "Episodes"],
-        default="Overview",
-        label_visibility="collapsed",
-    )
+    try:
+        timeseries_columns = load_timeseries_columns(data_dir)
+    except Exception as e:
+        timeseries_columns = []
+        st.warning(f"Could not inspect time-series columns: {e}")
 
-    if active_view == "Overview":
-        render_overview(filtered_episode_df, tables["summary_by_enemy"])
-    elif active_view == "Key Statistics":
-        render_key_statistics(filtered_episode_df)
-    elif active_view == "Time Series":
-        render_time_series(data_dir, episode_ids)
-    elif active_view == "Correlations":
-        render_correlations(filtered_episode_df, tables["selected_correlations"], tables["correlation_matrix"])
-    elif active_view == "Inference":
-        render_inference(filtered_episode_df, data_dir, episode_ids)
-    elif active_view == "Methods":
-        render_methods_reference()
-    elif active_view == "Episodes":
-        render_episode_explorer(filtered_episode_df)
+    available_stats = available_dashboard_stats(tables, timeseries_columns)
+    with st.sidebar:
+        selected_stats = select_stats(available_stats)
+
+    with st.expander("Debug: selected stats"):
+        st.write("Selected:", selected_stats)
+        st.write("Available:", available_stats)
+        st.write("Columns:", list(filtered_episode_df.columns))
+        st.write("Shape:", filtered_episode_df.shape)
+        st.dataframe(filtered_episode_df.head(20))
+
+    renderers: dict[str, Callable[[], None]] = {
+        "Overview": lambda: render_overview(filtered_episode_df, tables["summary_by_enemy"]),
+        "Key Statistics": lambda: render_key_statistics(filtered_episode_df),
+        "Time Series": lambda: render_time_series(data_dir, episode_ids),
+        "Correlations": lambda: render_correlations(filtered_episode_df, tables["selected_correlations"], tables["correlation_matrix"]),
+        "Inference": lambda: render_inference(filtered_episode_df, data_dir, episode_ids),
+        "Methods": render_methods_reference,
+        "Episodes": lambda: render_episode_explorer(filtered_episode_df),
+    }
+
+    if not selected_stats:
+        st.info("Select at least one stat to show.")
+        return
+
+    for stat_name in selected_stats:
+        renderer = renderers.get(stat_name)
+        if renderer is None:
+            st.warning(f"Skipping unavailable stat: {stat_name}")
+            continue
+        render_stat_guard(stat_name, renderer)
 
 
 if __name__ == "__main__":
