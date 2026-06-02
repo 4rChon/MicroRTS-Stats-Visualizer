@@ -830,7 +830,7 @@ def render_overview(episode_df: pd.DataFrame, summary_by_enemy: pd.DataFrame) ->
         )
         fig.update_yaxes(range=[0, 1])
         fig.update_layout(height=380, margin={"l": 8, "r": 8, "t": 28, "b": 8})
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     with right:
         outcomes = episode_df.assign(
@@ -850,9 +850,9 @@ def render_overview(episode_df: pd.DataFrame, summary_by_enemy: pd.DataFrame) ->
             opacity=0.72,
         )
         fig.update_layout(height=380, margin={"l": 8, "r": 8, "t": 28, "b": 8})
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
-    st.dataframe(enemy_summary, use_container_width=True, hide_index=True)
+    st.dataframe(enemy_summary, width="stretch", hide_index=True)
 
 
 def render_key_statistics(episode_df: pd.DataFrame) -> None:
@@ -909,14 +909,14 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
             labels={"pearson_r": "Pearson r with win score", "metric_label": "Metric"},
         )
         fig.update_layout(height=430, margin={"l": 8, "r": 8, "t": 28, "b": 8})
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         association_display = associations[
             ["metric_label", "pearson_r", "spearman_rho", "win_mean", "draw_mean", "loss_mean", "n"]
         ].head(20)
         st.dataframe(
             association_display,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "metric_label": "Metric",
@@ -948,7 +948,7 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
                         "n",
                     ]
                 ].head(15),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "metric_label": "Metric",
@@ -969,7 +969,7 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
         else:
             st.dataframe(
                 metric_correlations[["metric_a_label", "metric_b_label", "pearson_r"]].head(15),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "metric_a_label": "Metric A",
@@ -1027,7 +1027,7 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
             labels={"metric_label": "Metric", "mean_value": "Mean value", "outcome": "Outcome"},
         )
         fig.update_layout(height=410, margin={"l": 8, "r": 8, "t": 28, "b": 8}, xaxis_tickangle=-20)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     detail_left, detail_right = st.columns([1, 1])
     with detail_left:
@@ -1056,7 +1056,7 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
             )
             st.dataframe(
                 distance_summary,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "distance_bin": "Average distance",
@@ -1093,7 +1093,7 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
                 column_config["final_workers"] = st.column_config.NumberColumn("Final workers", format="%.3f")
             st.dataframe(
                 survival_summary,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config=column_config,
             )
@@ -1107,7 +1107,7 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
         )
         st.dataframe(
             draw_by_enemy,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "enemy": "Enemy",
@@ -1135,7 +1135,7 @@ def render_time_series(time_df: pd.DataFrame) -> None:
 
     metric_label = METRIC_LABELS.get(metric, clean_label(metric))
     agg = aggregate_time_series(time_df, metric, x_mode, cumulative, bins)
-    st.plotly_chart(plot_time_series(agg, metric_label, x_mode), use_container_width=True)
+    st.plotly_chart(plot_time_series(agg, metric_label, x_mode), width="stretch")
 
 
 def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.DataFrame, matrix_df: pd.DataFrame) -> None:
@@ -1289,7 +1289,7 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
         )
         add_regression_lines(fig, plot_df, x_col, y_col)
     fig.update_layout(height=470, margin={"l": 8, "r": 8, "t": 28, "b": 8})
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     col1, col2 = st.columns([1, 1])
     with col1:
@@ -1304,7 +1304,7 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
                 labels={"pearson_r": "Pearson r", "metric": "Metric"},
             )
             fig.update_layout(height=480, margin={"l": 8, "r": 8, "t": 28, "b": 8})
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     with col2:
         matrix = build_filtered_correlation_matrix(episode_df)
         if not matrix.empty:
@@ -1317,7 +1317,7 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
                 labels={"color": "Pearson r"},
             )
             fig.update_layout(height=480, margin={"l": 8, "r": 8, "t": 28, "b": 8})
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
 
 def render_episode_explorer(episode_df: pd.DataFrame) -> None:
@@ -1332,7 +1332,7 @@ def render_episode_explorer(episode_df: pd.DataFrame) -> None:
         labels={"enemy": "Enemy", metric: EPISODE_SCATTER_COLUMNS[metric]},
     )
     fig.update_layout(height=430, margin={"l": 8, "r": 8, "t": 28, "b": 8}, showlegend=False)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     display_cols = [
         col
@@ -1355,7 +1355,7 @@ def render_episode_explorer(episode_df: pd.DataFrame) -> None:
     ]
     st.dataframe(
         episode_df[display_cols].sort_values(["enemy", "episode_id"]),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -1447,7 +1447,7 @@ def render_trajectory_charts(
         yaxis_title="Mean summary value",
         legend_title_text=grouping,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     valid_results = result_df[result_df["test"] != "Not run"].copy()
     if valid_results.empty:
@@ -1464,7 +1464,7 @@ def render_trajectory_charts(
     )
     effect_fig.add_hline(y=0.0, line_dash="dash", opacity=0.5)
     effect_fig.update_layout(height=360, margin={"l": 8, "r": 8, "t": 28, "b": 8})
-    left.plotly_chart(effect_fig, use_container_width=True)
+    left.plotly_chart(effect_fig, width="stretch")
 
     p_col = "p_value_corrected" if "p_value_corrected" in valid_results.columns else "p_value"
     p_fig = px.line(
@@ -1478,7 +1478,7 @@ def render_trajectory_charts(
     p_fig.add_hline(y=0.05, line_dash="dash", line_color="red", opacity=0.65)
     p_fig.update_yaxes(range=[0, 1])
     p_fig.update_layout(height=360, margin={"l": 8, "r": 8, "t": 28, "b": 8})
-    right.plotly_chart(p_fig, use_container_width=True)
+    right.plotly_chart(p_fig, width="stretch")
 
 
 def render_episode_level_inference(episode_df: pd.DataFrame) -> None:
@@ -1550,7 +1550,7 @@ def render_episode_level_inference(episode_df: pd.DataFrame) -> None:
                 labels={"outcome": "Outcome", metric: EPISODE_SCATTER_COLUMNS[metric]},
             )
             fig.update_layout(height=380, margin={"l": 8, "r": 8, "t": 28, "b": 8}, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     elif test_family == "Metric by enemy":
         metric = st.selectbox("Metric", numeric_cols, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value], key="inference_metric_by_enemy")
         if st.button("Run test", type="primary", key="inference_run_metric_by_enemy"):
@@ -1574,7 +1574,7 @@ def render_episode_level_inference(episode_df: pd.DataFrame) -> None:
                 labels={"enemy": "Enemy", metric: EPISODE_SCATTER_COLUMNS[metric]},
             )
             fig.update_layout(height=380, margin={"l": 8, "r": 8, "t": 28, "b": 8}, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     elif test_family == "Correlation test":
         left, right = st.columns(2)
         x_col = left.selectbox("X metric", numeric_cols, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value], index=0, key="inference_correlation_x")
@@ -1602,7 +1602,7 @@ def render_episode_level_inference(episode_df: pd.DataFrame) -> None:
             )
             add_regression_lines(fig, episode_df, x_col, y_col)
             fig.update_layout(height=380, margin={"l": 8, "r": 8, "t": 28, "b": 8})
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     else:
         metric = st.selectbox(
             "Predictor metric",
@@ -1625,7 +1625,7 @@ def render_episode_level_inference(episode_df: pd.DataFrame) -> None:
 
     if not result_df.empty:
         st.subheader("Results")
-        st.dataframe(result_df, use_container_width=True, hide_index=True)
+        st.dataframe(result_df, width="stretch", hide_index=True)
         st.download_button(
             "Download results CSV",
             result_df.to_csv(index=False),
@@ -1635,7 +1635,7 @@ def render_episode_level_inference(episode_df: pd.DataFrame) -> None:
 
     if not support_df.empty:
         st.subheader("Supporting table")
-        st.dataframe(support_df, use_container_width=True, hide_index=True)
+        st.dataframe(support_df, width="stretch", hide_index=True)
 
 
 def render_trajectory_inference(time_df: pd.DataFrame) -> None:
@@ -1686,7 +1686,7 @@ def render_trajectory_inference(time_df: pd.DataFrame) -> None:
         render_trajectory_charts(trajectory_df, result_df, grouping)
 
         st.subheader("Results")
-        st.dataframe(result_df, use_container_width=True, hide_index=True)
+        st.dataframe(result_df, width="stretch", hide_index=True)
         st.download_button(
             "Download trajectory results CSV",
             result_df.to_csv(index=False),
@@ -1696,7 +1696,7 @@ def render_trajectory_inference(time_df: pd.DataFrame) -> None:
 
         st.subheader("Episode-bin summaries")
         preview_cols = ["episode_id", "enemy", "outcome", "progress_bin", "metric", "summary", "value"]
-        st.dataframe(trajectory_df[preview_cols].head(500), use_container_width=True, hide_index=True)
+        st.dataframe(trajectory_df[preview_cols].head(500), width="stretch", hide_index=True)
 
 
 def render_inference(episode_df: pd.DataFrame, data_dir: str, episode_ids: set) -> None:
