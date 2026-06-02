@@ -383,6 +383,15 @@ def abort_if_memory_high(where: str) -> None:
     if current > MAX_SAFE_MB:
         st.error(f"Aborting at {where}: memory is already {current:.1f} MB.")
         print(f"[MEMORY ABORT] {where} | memory={current:.1f} MB", flush=True)
+
+        timeseries_cache_clear = getattr(globals().get("load_timeseries_table"), "clear", None)
+        if callable(timeseries_cache_clear):
+            timeseries_cache_clear()
+            st.warning("Cleared cached time-series data to free memory. Please rerun the dashboard.")
+        else:
+            st.cache_data.clear()
+            st.warning("Cleared cached dashboard data to free memory. Please rerun the dashboard.")
+
         st.stop()
 
 
