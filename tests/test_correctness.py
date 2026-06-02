@@ -171,6 +171,34 @@ def test_generated_stats_are_parquet_by_default(tmp_path: Path) -> None:
     assert pd.read_parquet(tmp_path / "correlation_matrix.parquet").index.name == "metric"
 
 
+def test_read_table_supports_column_projection_and_episode_filter(tmp_path: Path) -> None:
+    pd.DataFrame(
+        {
+            "episode_id": ["keep", "drop"],
+            "enemy": ["a", "b"],
+            "metric": [1.0, 2.0],
+            "unused": [10.0, 20.0],
+        }
+    ).to_parquet(tmp_path / "timeseries.parquet", index=False)
+
+    loaded = dashboard.read_table(
+        tmp_path,
+        "timeseries",
+        columns=("episode_id", "metric"),
+        filters=[("episode_id", "in", ["keep"])],
+    )
+
+    assert loaded.columns.tolist() == ["episode_id", "metric"]
+    assert loaded["episode_id"].tolist() == ["keep"]
+    assert loaded["metric"].tolist() == [1.0]
+
+
+def test_get_table_columns_reads_parquet_metadata(tmp_path: Path) -> None:
+    pd.DataFrame({"episode_id": ["e1"], "metric": [1.0]}).to_parquet(tmp_path / "timeseries.parquet", index=False)
+
+    assert dashboard.get_table_columns(tmp_path, "timeseries") == ["episode_id", "metric"]
+
+
 def test_dashboard_optional_tables_prefer_parquet(tmp_path: Path) -> None:
     pd.DataFrame({"source": ["csv"]}).to_csv(tmp_path / "summary_by_enemy.csv", index=False)
     pd.DataFrame({"source": ["parquet"]}).to_parquet(tmp_path / "summary_by_enemy.parquet", index=False)
