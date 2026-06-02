@@ -960,6 +960,45 @@ def plot_time_series(agg: pd.DataFrame, metric_label: str, x_mode: str) -> go.Fi
     return fig
 
 
+def table_csv(data: pd.DataFrame, *, include_index: bool = False) -> str:
+    return data.to_csv(index=include_index)
+
+
+def download_dynamic_table_csv(
+    data: pd.DataFrame,
+    label: str,
+    file_name: str,
+    *,
+    include_index: bool = False,
+    key: str,
+) -> None:
+    st.download_button(
+        label,
+        table_csv(data, include_index=include_index),
+        file_name=file_name,
+        mime="text/csv",
+        key=key,
+    )
+
+
+def render_downloadable_dataframe(
+    data: pd.DataFrame,
+    *,
+    label: str,
+    file_name: str,
+    key: str,
+    include_index: bool = False,
+    dataframe_kwargs: dict[str, Any] | None = None,
+) -> None:
+    st.dataframe(data, **(dataframe_kwargs or {}))
+    download_dynamic_table_csv(
+        data,
+        label,
+        file_name,
+        include_index=include_index,
+        key=key,
+    )
+
 def render_metric_row(episode_df: pd.DataFrame) -> None:
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Episodes", f"{len(episode_df):,}")
@@ -1023,7 +1062,13 @@ def render_overview(episode_df: pd.DataFrame, summary_by_enemy: pd.DataFrame) ->
         fig.update_layout(height=380, margin={"l": 8, "r": 8, "t": 28, "b": 8})
         st.plotly_chart(fig, width="stretch")
 
-    st.dataframe(enemy_summary, width="stretch", hide_index=True)
+    render_downloadable_dataframe(
+        enemy_summary,
+        label="Download enemy summary CSV",
+        file_name="enemy_summary_filtered.csv",
+        key="download_enemy_summary_filtered_csv",
+        dataframe_kwargs={"width": "stretch", "hide_index": True},
+    )
 
 
 def render_key_statistics(episode_df: pd.DataFrame) -> None:
@@ -1085,18 +1130,23 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
         association_display = associations[
             ["metric_label", "pearson_r", "spearman_rho", "win_mean", "draw_mean", "loss_mean", "n"]
         ].head(20)
-        st.dataframe(
+        render_downloadable_dataframe(
             association_display,
-            width="stretch",
-            hide_index=True,
-            column_config={
-                "metric_label": "Metric",
-                "pearson_r": st.column_config.NumberColumn("Pearson r", format="%.3f"),
-                "spearman_rho": st.column_config.NumberColumn("Spearman rho", format="%.3f"),
-                "win_mean": st.column_config.NumberColumn("Win mean", format="%.3f"),
-                "draw_mean": st.column_config.NumberColumn("Draw mean", format="%.3f"),
-                "loss_mean": st.column_config.NumberColumn("Loss mean", format="%.3f"),
-                "n": st.column_config.NumberColumn("n", format="%d"),
+            label="Download outcome associations CSV",
+            file_name="outcome_associations_filtered.csv",
+            key="download_outcome_associations_filtered_csv",
+            dataframe_kwargs={
+                "width": "stretch",
+                "hide_index": True,
+                "column_config": {
+                    "metric_label": "Metric",
+                    "pearson_r": st.column_config.NumberColumn("Pearson r", format="%.3f"),
+                    "spearman_rho": st.column_config.NumberColumn("Spearman rho", format="%.3f"),
+                    "win_mean": st.column_config.NumberColumn("Win mean", format="%.3f"),
+                    "draw_mean": st.column_config.NumberColumn("Draw mean", format="%.3f"),
+                    "loss_mean": st.column_config.NumberColumn("Loss mean", format="%.3f"),
+                    "n": st.column_config.NumberColumn("n", format="%d"),
+                },
             },
         )
 
@@ -1106,30 +1156,36 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
         if separations.empty:
             st.info("Select filters with at least one win and one loss to estimate win/loss separation.")
         else:
-            st.dataframe(
-                separations[
-                    [
-                        "metric_label",
-                        "cliffs_delta",
-                        "win_mean",
-                        "loss_mean",
-                        "mean_difference",
-                        "win_median",
-                        "loss_median",
-                        "n",
-                    ]
-                ].head(15),
-                width="stretch",
-                hide_index=True,
-                column_config={
-                    "metric_label": "Metric",
-                    "cliffs_delta": st.column_config.NumberColumn("Cliff's delta", format="%.3f"),
-                    "win_mean": st.column_config.NumberColumn("Win mean", format="%.3f"),
-                    "loss_mean": st.column_config.NumberColumn("Loss mean", format="%.3f"),
-                    "mean_difference": st.column_config.NumberColumn("Mean diff.", format="%.3f"),
-                    "win_median": st.column_config.NumberColumn("Win median", format="%.3f"),
-                    "loss_median": st.column_config.NumberColumn("Loss median", format="%.3f"),
-                    "n": st.column_config.NumberColumn("n", format="%d"),
+            separation_display = separations[
+                [
+                    "metric_label",
+                    "cliffs_delta",
+                    "win_mean",
+                    "loss_mean",
+                    "mean_difference",
+                    "win_median",
+                    "loss_median",
+                    "n",
+                ]
+            ].head(15)
+            render_downloadable_dataframe(
+                separation_display,
+                label="Download win/loss separations CSV",
+                file_name="win_loss_separations_filtered.csv",
+                key="download_win_loss_separations_filtered_csv",
+                dataframe_kwargs={
+                    "width": "stretch",
+                    "hide_index": True,
+                    "column_config": {
+                        "metric_label": "Metric",
+                        "cliffs_delta": st.column_config.NumberColumn("Cliff's delta", format="%.3f"),
+                        "win_mean": st.column_config.NumberColumn("Win mean", format="%.3f"),
+                        "loss_mean": st.column_config.NumberColumn("Loss mean", format="%.3f"),
+                        "mean_difference": st.column_config.NumberColumn("Mean diff.", format="%.3f"),
+                        "win_median": st.column_config.NumberColumn("Win median", format="%.3f"),
+                        "loss_median": st.column_config.NumberColumn("Loss median", format="%.3f"),
+                        "n": st.column_config.NumberColumn("n", format="%d"),
+                    },
                 },
             )
 
@@ -1138,14 +1194,20 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
         if metric_correlations.empty:
             st.info("No metric correlations are available for the current filters.")
         else:
-            st.dataframe(
-                metric_correlations[["metric_a_label", "metric_b_label", "pearson_r"]].head(15),
-                width="stretch",
-                hide_index=True,
-                column_config={
-                    "metric_a_label": "Metric A",
-                    "metric_b_label": "Metric B",
-                    "pearson_r": st.column_config.NumberColumn("Pearson r", format="%.3f"),
+            metric_correlation_display = metric_correlations[["metric_a_label", "metric_b_label", "pearson_r"]].head(15)
+            render_downloadable_dataframe(
+                metric_correlation_display,
+                label="Download metric correlations CSV",
+                file_name="metric_correlations_filtered.csv",
+                key="download_metric_correlations_filtered_csv",
+                dataframe_kwargs={
+                    "width": "stretch",
+                    "hide_index": True,
+                    "column_config": {
+                        "metric_a_label": "Metric A",
+                        "metric_b_label": "Metric B",
+                        "pearson_r": st.column_config.NumberColumn("Pearson r", format="%.3f"),
+                    },
                 },
             )
 
@@ -1225,18 +1287,23 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
                 )
                 .sort_values("distance_bin")
             )
-            st.dataframe(
+            render_downloadable_dataframe(
                 distance_summary,
-                width="stretch",
-                hide_index=True,
-                column_config={
-                    "distance_bin": "Average distance",
-                    "episodes": st.column_config.NumberColumn("Episodes", format="%d"),
-                    "win_score": st.column_config.NumberColumn("Win score", format="%.3f"),
-                    "resources_gathered": st.column_config.NumberColumn("Resources gathered", format="%.3f"),
-                    "bank_increases": st.column_config.NumberColumn("Bank increases", format="%.3f"),
-                    "return_success_rate": st.column_config.NumberColumn("Return success", format="%.3f"),
-                    "units_produced": st.column_config.NumberColumn("Units produced", format="%.3f"),
+                label="Download resource distance bins CSV",
+                file_name="resource_distance_bins_filtered.csv",
+                key="download_resource_distance_bins_filtered_csv",
+                dataframe_kwargs={
+                    "width": "stretch",
+                    "hide_index": True,
+                    "column_config": {
+                        "distance_bin": "Average distance",
+                        "episodes": st.column_config.NumberColumn("Episodes", format="%d"),
+                        "win_score": st.column_config.NumberColumn("Win score", format="%.3f"),
+                        "resources_gathered": st.column_config.NumberColumn("Resources gathered", format="%.3f"),
+                        "bank_increases": st.column_config.NumberColumn("Bank increases", format="%.3f"),
+                        "return_success_rate": st.column_config.NumberColumn("Return success", format="%.3f"),
+                        "units_produced": st.column_config.NumberColumn("Units produced", format="%.3f"),
+                    },
                 },
             )
         else:
@@ -1262,11 +1329,16 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
             }
             if "final_workers" in survival_summary.columns:
                 column_config["final_workers"] = st.column_config.NumberColumn("Final workers", format="%.3f")
-            st.dataframe(
+            render_downloadable_dataframe(
                 survival_summary,
-                width="stretch",
-                hide_index=True,
-                column_config=column_config,
+                label="Download survival draw proxy CSV",
+                file_name="survival_draw_proxy_filtered.csv",
+                key="download_survival_draw_proxy_filtered_csv",
+                dataframe_kwargs={
+                    "width": "stretch",
+                    "hide_index": True,
+                    "column_config": column_config,
+                },
             )
         else:
             st.info("Survival proxy columns are not available in the loaded episode summary.")
@@ -1276,14 +1348,19 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
             .agg(episodes=("episode_id", "count"), draw_rate=("win", lambda values: float((values == 0.5).mean())))
             .sort_values("draw_rate", ascending=False)
         )
-        st.dataframe(
+        render_downloadable_dataframe(
             draw_by_enemy,
-            width="stretch",
-            hide_index=True,
-            column_config={
-                "enemy": "Enemy",
-                "episodes": st.column_config.NumberColumn("Episodes", format="%d"),
-                "draw_rate": st.column_config.NumberColumn("Draw rate", format="%.3f"),
+            label="Download draw rates by enemy CSV",
+            file_name="draw_rates_by_enemy_filtered.csv",
+            key="download_draw_rates_by_enemy_filtered_csv",
+            dataframe_kwargs={
+                "width": "stretch",
+                "hide_index": True,
+                "column_config": {
+                    "enemy": "Enemy",
+                    "episodes": st.column_config.NumberColumn("Episodes", format="%d"),
+                    "draw_rate": st.column_config.NumberColumn("Draw rate", format="%.3f"),
+                },
             },
         )
 
@@ -1337,6 +1414,22 @@ def render_time_series(data_dir: str, episode_ids: set[str]) -> None:
         st.info(f"No aggregated time-series values are available for {metric_label}.")
         return
     st.plotly_chart(plot_time_series(agg, metric_label, x_mode), width="stretch")
+
+    download_cols = st.columns([1, 1])
+    with download_cols[0]:
+        download_dynamic_table_csv(
+            agg,
+            "Download aggregated time series CSV",
+            f"time_series_{metric}_aggregated.csv",
+            key="download_aggregated_time_series_csv",
+        )
+    with download_cols[1]:
+        download_dynamic_table_csv(
+            time_df[list(required_columns)].sort_values(["enemy", "episode_id", "t"]),
+            "Download filtered time series rows CSV",
+            f"time_series_{metric}_filtered_rows.csv",
+            key="download_filtered_time_series_rows_csv",
+        )
 
 
 def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.DataFrame, matrix_df: pd.DataFrame) -> None:
@@ -1537,6 +1630,12 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
             )
             fig.update_layout(height=480, margin={"l": 8, "r": 8, "t": 28, "b": 8})
             st.plotly_chart(fig, width="stretch")
+            download_dynamic_table_csv(
+                corr_plot_df,
+                "Download selected correlations CSV",
+                "selected_correlations_filtered.csv",
+                key="download_selected_correlations_filtered_csv",
+            )
     with col2:
         matrix = build_filtered_correlation_matrix(episode_df)
         if not matrix.empty:
@@ -1550,6 +1649,13 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
             )
             fig.update_layout(height=480, margin={"l": 8, "r": 8, "t": 28, "b": 8})
             st.plotly_chart(fig, width="stretch")
+            download_dynamic_table_csv(
+                matrix,
+                "Download correlation matrix CSV",
+                "correlation_matrix_filtered.csv",
+                include_index=True,
+                key="download_correlation_matrix_filtered_csv",
+            )
 
 
 def render_episode_explorer(episode_df: pd.DataFrame) -> None:
@@ -1595,10 +1701,13 @@ def render_episode_explorer(episode_df: pd.DataFrame) -> None:
         ]
         if col in episode_df.columns
     ]
-    st.dataframe(
-        episode_df[display_cols].sort_values(["enemy", "episode_id"]),
-        width="stretch",
-        hide_index=True,
+    episode_display = episode_df[display_cols].sort_values(["enemy", "episode_id"])
+    render_downloadable_dataframe(
+        episode_display,
+        label="Download episode explorer CSV",
+        file_name="episode_explorer_filtered.csv",
+        key="download_episode_explorer_filtered_csv",
+        dataframe_kwargs={"width": "stretch", "hide_index": True},
     )
 
 
@@ -1895,17 +2004,23 @@ def render_episode_level_inference(episode_df: pd.DataFrame) -> None:
 
     if not result_df.empty:
         st.subheader("Results")
-        st.dataframe(result_df, width="stretch", hide_index=True)
-        st.download_button(
-            "Download results CSV",
-            result_df.to_csv(index=False),
+        render_downloadable_dataframe(
+            result_df,
+            label="Download results CSV",
             file_name="inference_results.csv",
-            mime="text/csv",
+            key="download_inference_results_csv",
+            dataframe_kwargs={"width": "stretch", "hide_index": True},
         )
 
     if not support_df.empty:
         st.subheader("Supporting table")
-        st.dataframe(support_df, width="stretch", hide_index=True)
+        render_downloadable_dataframe(
+            support_df,
+            label="Download supporting table CSV",
+            file_name="inference_supporting_table.csv",
+            key="download_inference_supporting_table_csv",
+            dataframe_kwargs={"width": "stretch", "hide_index": True},
+        )
 
 
 def render_trajectory_inference(data_dir: str, episode_ids: set[str]) -> None:
@@ -1971,17 +2086,24 @@ def render_trajectory_inference(data_dir: str, episode_ids: set[str]) -> None:
         render_trajectory_charts(trajectory_df, result_df, grouping)
 
         st.subheader("Results")
-        st.dataframe(result_df, width="stretch", hide_index=True)
-        st.download_button(
-            "Download trajectory results CSV",
-            result_df.to_csv(index=False),
+        render_downloadable_dataframe(
+            result_df,
+            label="Download trajectory results CSV",
             file_name="trajectory_inference_results.csv",
-            mime="text/csv",
+            key="download_trajectory_inference_results_csv",
+            dataframe_kwargs={"width": "stretch", "hide_index": True},
         )
 
         st.subheader("Episode-bin summaries")
         preview_cols = ["episode_id", "enemy", "outcome", "progress_bin", "metric", "summary", "value"]
-        st.dataframe(trajectory_df[preview_cols].head(500), width="stretch", hide_index=True)
+        trajectory_preview = trajectory_df[preview_cols].head(500)
+        render_downloadable_dataframe(
+            trajectory_preview,
+            label="Download episode-bin summaries CSV",
+            file_name="trajectory_episode_bin_summaries.csv",
+            key="download_trajectory_episode_bin_summaries_csv",
+            dataframe_kwargs={"width": "stretch", "hide_index": True},
+        )
 
 
 def available_dashboard_stats(tables: dict[str, pd.DataFrame], timeseries_columns: list[str]) -> list[str]:
@@ -2074,7 +2196,13 @@ def main() -> None:
         st.write("Available:", available_stats)
         st.write("Columns:", list(filtered_episode_df.columns))
         st.write("Shape:", filtered_episode_df.shape)
-        st.dataframe(filtered_episode_df.head(20))
+        debug_preview = filtered_episode_df.head(20)
+        render_downloadable_dataframe(
+            debug_preview,
+            label="Download debug episode preview CSV",
+            file_name="debug_episode_preview.csv",
+            key="download_debug_episode_preview_csv",
+        )
 
     renderers: dict[str, Callable[[], None]] = {
         "Overview": lambda: render_overview(filtered_episode_df, tables["summary_by_enemy"]),
