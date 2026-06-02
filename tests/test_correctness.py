@@ -212,3 +212,10 @@ def test_dashboard_optional_tables_prefer_parquet(tmp_path: Path) -> None:
     loaded = dashboard.read_optional_table(tmp_path, "summary_by_enemy")
 
     assert loaded["source"].iloc[0] == "parquet"
+
+
+def test_table_csv_can_include_dataframe_index() -> None:
+    df = pd.DataFrame({"value": [1.5, 2.5]}, index=pd.Index(["a", "b"], name="metric"))
+
+    assert dashboard.table_csv(df, include_index=False) == "value\n1.5\n2.5\n"
+    assert dashboard.table_csv(df, include_index=True) == "metric,value\na,1.5\nb,2.5\n"
