@@ -800,7 +800,7 @@ def load_timeseries_columns(data_dir_text: str) -> list[str]:
     return list(get_table_columns(data_dir, "timeseries"))
 
 
-@st.cache_data(show_spinner="Loading time series data...")
+@st.cache_data(show_spinner="Loading time series data...", max_entries=2, ttl=600)
 def load_timeseries_table(
     data_dir_text: str,
     columns: tuple[str, ...] | None = None,
