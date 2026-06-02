@@ -225,9 +225,14 @@ def compare_metric_by_outcome(df: pd.DataFrame, metric: str) -> pd.DataFrame:
 
 def compare_metric_by_enemy(df: pd.DataFrame, metric: str) -> pd.DataFrame:
     work = df[["enemy", metric]].replace([np.inf, -np.inf], np.nan).dropna()
-    groups = [group[metric].astype(float) for _, group in work.groupby("enemy") if len(group) >= 2]
+    eligible_enemies = work.groupby("enemy").size()
+    eligible_enemies = eligible_enemies[eligible_enemies >= 2].index
+    work = work[work["enemy"].isin(eligible_enemies)].copy()
+    groups = [group[metric].astype(float) for _, group in work.groupby("enemy")]
     if len(groups) < 2:
         return empty_result("Need at least two enemies with two or more observations for this metric.")
+    if work[metric].nunique() < 2:
+        return empty_result("Need metric variation across eligible enemy groups.")
 
     rows: list[dict[str, Any]] = []
     h_stat, h_p = stats.kruskal(*groups)
@@ -265,6 +270,9 @@ def compare_metric_by_enemy(df: pd.DataFrame, metric: str) -> pd.DataFrame:
 
 
 def correlation_tests(df: pd.DataFrame, x_col: str, y_col: str) -> pd.DataFrame:
+    if x_col == y_col:
+        return empty_result("Select two different metrics for a correlation test.")
+
     pair = numeric_pair(df, x_col, y_col)
     if len(pair) < 3:
         return empty_result("Need at least three complete observations.")
@@ -383,7 +391,7 @@ def build_trajectory_summary(
     bins: int,
     summary: str,
 ) -> pd.DataFrame:
-    required = {"episode_id", "enemy", "win", "progress", metric}
+    required = {"episode_id", "enemy", "win", "t", "progress", metric}
     missing = sorted(required - set(time_df.columns))
     if missing:
         raise ValueError(f"timeseries is missing required columns: {', '.join(missing)}")
@@ -417,8 +425,9 @@ def build_trajectory_summary(
         )
     elif summary == "AUC":
         ordered = work.sort_values(group_cols + ["progress"]).copy()
-        ordered["_prev_progress"] = grouped["progress"].shift()
-        ordered["_prev_value"] = grouped[metric].shift()
+        ordered_grouped = ordered.groupby(group_cols, sort=False, observed=True)
+        ordered["_prev_progress"] = ordered_grouped["progress"].shift()
+        ordered["_prev_value"] = ordered_grouped[metric].shift()
         ordered["_auc_piece"] = (
             (ordered["progress"] - ordered["_prev_progress"])
             * (ordered[metric].astype(float) + ordered["_prev_value"].astype(float))
@@ -532,12 +541,14 @@ def run_trajectory_inference(
                 )
                 continue
 
-            if bin_df["value"].nunique() < 2:
+            eligible_values = pd.concat(groups, ignore_index=True)
+            eligible_n = int(len(eligible_values))
+            if eligible_values.nunique() < 2:
                 h_stat, h_p, h_effect = np.nan, np.nan, np.nan
                 h_text = "Kruskal-Wallis could not run because this progress bin has no metric variation."
             else:
                 h_stat, h_p = stats.kruskal(*groups)
-                h_effect = float((h_stat - len(groups) + 1) / max(len(bin_df) - len(groups), 1))
+                h_effect = float((h_stat - len(groups) + 1) / max(eligible_n - len(groups), 1))
                 h_text = trajectory_interpretation("Kruskal-Wallis", float(h_p))
             rows.append(
                 {
@@ -550,7 +561,7 @@ def run_trajectory_inference(
                     "p_value": float(h_p),
                     "p_value_corrected": np.nan,
                     "effect_size": h_effect,
-                    "n": int(len(bin_df)),
+                    "n": eligible_n,
                     "interpretation": h_text,
                 }
             )

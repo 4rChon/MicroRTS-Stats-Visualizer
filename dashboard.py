@@ -24,8 +24,8 @@ DEFAULT_DATA_DIR = Path("stats_viz")
 
 METRIC_LABELS = {
     "resources_gathered": "Resources gathered",
-    "resources_returned": "Resources returned",
-    "resources_spent": "Resources spent",
+    "resources_returned": "Resource bank increases",
+    "resources_spent": "Resource bank decreases",
     "damage_dealt": "Damage dealt",
     "damage_taken": "Damage taken",
     "units_produced": "Units produced",
@@ -44,9 +44,9 @@ TRAJECTORY_SUMMARIES = ["mean", "max", "final", "sum", "AUC"]
 
 EPISODE_SCATTER_COLUMNS = {
     "resources_gathered_total": "Resources gathered",
-    "resources_returned_total": "Resources returned",
+    "resources_returned_total": "Resource bank increases",
     "resource_return_success_rate": "Resource return success rate",
-    "resources_spent_total": "Resources spent",
+    "resources_spent_total": "Resource bank decreases",
     "units_produced_total": "Units produced",
     "units_lost_total": "Units lost",
     "units_killed_total": "Units killed",
@@ -73,7 +73,22 @@ EPISODE_SCATTER_COLUMNS = {
     "action_return_total": "Return actions",
     "action_produce_total": "Produce actions",
     "action_attack_total": "Attack actions",
-    "win": "Win value",
+    "win": "Win score",
+    "win_score": "Win score",
+}
+
+SELECTED_CORRELATION_PAIRS = {
+    "resources_gathered_vs_average_distance_to_resource": ("average_distance_to_resource", "resources_gathered_total"),
+    "resources_gathered_vs_shortest_distance_to_resource": ("shortest_distance_to_resource", "resources_gathered_total"),
+    "resources_gathered_vs_win_score": ("resources_gathered_total", "win"),
+    "resource_return_success_rate_vs_win_score": ("resource_return_success_rate", "win"),
+    "resources_spent_vs_win_score": ("resources_spent_total", "win"),
+    "average_distance_to_resource_vs_win_score": ("average_distance_to_resource", "win"),
+    "shortest_distance_to_resource_vs_win_score": ("shortest_distance_to_resource", "win"),
+    "units_produced_vs_win_score": ("units_produced_total", "win"),
+    "units_killed_vs_win_score": ("units_killed_total", "win"),
+    "value_killed_vs_win_score": ("value_killed_total", "win"),
+    "duration_vs_win_score": ("duration", "win"),
 }
 
 KEY_STATS_EXCLUDED_COLUMNS = {
@@ -108,12 +123,12 @@ STAT_METHOD_SECTIONS = [
         "title": "Data Summaries",
         "methods": [
             {
-                "name": "Counts, means, medians, standard deviations, and win rates",
+                "name": "Counts, means, medians, standard deviations, win scores, and win rates",
                 "used_for": "Overview cards, enemy summaries, supporting tables, distribution plots, and binned charts.",
                 "explanation": (
                     "Counts show sample size. Means summarize the arithmetic average, medians summarize the middle observed value, "
-                    "and standard deviations summarize spread around the mean. Win rate is calculated as the mean of the encoded "
-                    "win value, where wins are 1.0, draws are 0.5, and losses are 0.0."
+                    "and standard deviations summarize spread around the mean. Win score is the mean of the encoded outcome value, "
+                    "where wins are 1.0, draws are 0.5, and losses are 0.0. Win rate excludes draws."
                 ),
                 "resources": [
                     ("pandas descriptive statistics", "https://pandas.pydata.org/docs/user_guide/basics.html#descriptive-statistics"),
@@ -136,8 +151,8 @@ STAT_METHOD_SECTIONS = [
                 "used_for": "Normalized time-series plots and trajectory inference.",
                 "explanation": (
                     "Episodes with different durations are mapped onto progress from 0 to 1, then divided into equal-width bins. "
-                    "This lets the dashboard compare early, middle, and late game behavior without treating longer episodes as "
-                    "having more independent observations."
+                    "Each episode is summarized inside each bin before group means are plotted. This lets the dashboard compare early, "
+                    "middle, and late game behavior without treating longer episodes as having more independent observations."
                 ),
                 "resources": [
                     ("pandas cut", "https://pandas.pydata.org/docs/reference/api/pandas.cut.html"),
@@ -386,6 +401,19 @@ def format_percent(value: float) -> str:
     return f"{100 * value:.1f}%"
 
 
+def true_win_rate(values: pd.Series) -> float:
+    outcomes = values[values.isin([0.0, 1.0])]
+    if outcomes.empty:
+        return float("nan")
+    return float((outcomes == 1.0).mean())
+
+
+def draw_rate(values: pd.Series) -> float:
+    if values.empty:
+        return float("nan")
+    return float((values == 0.5).mean())
+
+
 def metric_label(column: str) -> str:
     return EPISODE_SCATTER_COLUMNS.get(column, METRIC_LABELS.get(column, clean_label(column)))
 
@@ -515,6 +543,29 @@ def build_metric_correlations(episode_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("abs_pearson_r", ascending=False)
 
 
+def build_selected_correlations(episode_df: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for metric, (x_col, y_col) in SELECTED_CORRELATION_PAIRS.items():
+        if x_col not in episode_df.columns or y_col not in episode_df.columns:
+            continue
+        corr = pearsonr_safe(episode_df[x_col], episode_df[y_col])
+        rows.append({"metric": metric, "pearson_r": corr})
+    return pd.DataFrame(rows)
+
+
+def build_filtered_correlation_matrix(episode_df: pd.DataFrame) -> pd.DataFrame:
+    cols = [
+        col
+        for col in EPISODE_SCATTER_COLUMNS
+        if col in episode_df.columns
+        and col not in {"win_score"}
+        and pd.api.types.is_numeric_dtype(episode_df[col])
+    ]
+    if not cols:
+        return pd.DataFrame()
+    return episode_df[cols].replace([np.inf, -np.inf], np.nan).corr(method="pearson")
+
+
 def share_where(episode_df: pd.DataFrame, condition: pd.Series) -> float:
     if episode_df.empty:
         return float("nan")
@@ -552,18 +603,35 @@ def read_table(data_dir: Path, stem: str) -> pd.DataFrame:
     raise FileNotFoundError(f"Missing {stem}.parquet or {stem}.csv in {data_dir}")
 
 
-def read_optional_csv(path: Path) -> pd.DataFrame:
-    if path.exists():
-        return pd.read_csv(path)
+def read_optional_table(data_dir: Path, stem: str) -> pd.DataFrame:
+    parquet_path = data_dir / f"{stem}.parquet"
+    csv_path = data_dir / f"{stem}.csv"
+    if parquet_path.exists():
+        return pd.read_parquet(parquet_path)
+    if csv_path.exists():
+        df = pd.read_csv(csv_path)
+        if stem == "correlation_matrix" and not df.empty:
+            index_col = "metric" if "metric" in df.columns else df.columns[0]
+            if index_col == "metric" or str(index_col).startswith("Unnamed:"):
+                return df.set_index(index_col)
+        return df
     return pd.DataFrame()
 
 
 def add_derived_episode_metrics(episode_df: pd.DataFrame) -> pd.DataFrame:
     df = episode_df.copy()
-    required = {"resources_returned_total", "resources_gathered_total"}
-    if "resource_return_success_rate" not in df.columns and required.issubset(df.columns):
-        gathered = df["resources_gathered_total"].replace(0, np.nan)
-        df["resource_return_success_rate"] = df["resources_returned_total"] / gathered
+    if "win_score" not in df.columns and "win" in df.columns:
+        df["win_score"] = df["win"]
+
+    action_required = {"action_return_total", "action_harvest_total"}
+    if action_required.issubset(df.columns):
+        harvested = df["action_harvest_total"].replace(0, np.nan)
+        df["resource_return_success_rate"] = df["action_return_total"] / harvested
+    else:
+        required = {"resources_returned_total", "resources_gathered_total"}
+        if "resource_return_success_rate" not in df.columns and required.issubset(df.columns):
+            gathered = df["resources_gathered_total"].replace(0, np.nan)
+            df["resource_return_success_rate"] = df["resources_returned_total"] / gathered
     return df
 
 
@@ -573,9 +641,9 @@ def load_episode_tables(data_dir_text: str) -> dict[str, pd.DataFrame]:
     episode_df = add_derived_episode_metrics(read_table(data_dir, "episode_summary"))
     return {
         "episode": episode_df,
-        "summary_by_enemy": read_optional_csv(data_dir / "summary_by_enemy.csv"),
-        "selected_correlations": read_optional_csv(data_dir / "selected_correlations_by_enemy.csv"),
-        "correlation_matrix": read_optional_csv(data_dir / "overall" / "correlation_matrix.csv"),
+        "summary_by_enemy": read_optional_table(data_dir, "summary_by_enemy"),
+        "selected_correlations": read_optional_table(data_dir, "selected_correlations_by_enemy"),
+        "correlation_matrix": read_optional_table(data_dir / "overall", "correlation_matrix"),
     }
 
 
@@ -634,14 +702,22 @@ def aggregate_time_series(
             include_lowest=True,
             labels=False,
         )
-        grouped = (
-            df.groupby(["enemy", "x"], as_index=False)
+        episode_grouped = (
+            df.dropna(subset=["x"])
+            .groupby(["enemy", "episode_id", "x"], as_index=False)
             .agg(
                 x_value=("progress", "mean"),
-                mean=(y_col, "mean"),
-                median=(y_col, "median"),
-                std=(y_col, "std"),
-                n=(y_col, "count"),
+                episode_value=(y_col, "mean"),
+            )
+        )
+        grouped = (
+            episode_grouped.groupby(["enemy", "x"], as_index=False)
+            .agg(
+                x_value=("x_value", "mean"),
+                mean=("episode_value", "mean"),
+                median=("episode_value", "median"),
+                std=("episode_value", "std"),
+                n=("episode_value", "count"),
             )
             .dropna(subset=["x_value"])
         )
@@ -695,7 +771,12 @@ def plot_time_series(agg: pd.DataFrame, metric_label: str, x_mode: str) -> go.Fi
                 y=group["mean"],
                 mode="lines",
                 name=str(enemy),
-                hovertemplate=f"{x_title}: %{{x:.2f}}<br>{metric_label}: %{{y:.2f}}<extra>{enemy}</extra>",
+                customdata=np.stack([group["n"].to_numpy()], axis=-1),
+                hovertemplate=(
+                    f"{x_title}: %{{x:.2f}}<br>{metric_label}: %{{y:.2f}}"
+                    "<br>Episodes: %{customdata[0]}<extra>"
+                    f"{enemy}</extra>"
+                ),
             )
         )
     fig.update_layout(
@@ -711,9 +792,9 @@ def plot_time_series(agg: pd.DataFrame, metric_label: str, x_mode: str) -> go.Fi
 def render_metric_row(episode_df: pd.DataFrame) -> None:
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Episodes", f"{len(episode_df):,}")
-    col2.metric("Win rate", format_number(episode_df["win"].mean()))
-    col3.metric("Mean duration", format_number(episode_df["duration"].mean()))
-    col4.metric("Mean gathered", format_number(episode_df["resources_gathered_total"].mean()))
+    col2.metric("Win rate", format_percent(true_win_rate(episode_df["win"])))
+    col3.metric("Win score", format_number(episode_df["win"].mean()))
+    col4.metric("Mean duration", format_number(episode_df["duration"].mean()))
     if "resource_return_success_rate" in episode_df.columns:
         col5.metric("Return success", format_percent(episode_df["resource_return_success_rate"].mean()))
     else:
@@ -729,7 +810,9 @@ def render_overview(episode_df: pd.DataFrame, summary_by_enemy: pd.DataFrame) ->
             episode_df.groupby("enemy", as_index=False)
             .agg(
                 episodes=("episode_id", "count"),
-                win_rate=("win", "mean"),
+                win_rate=("win", true_win_rate),
+                win_score=("win", "mean"),
+                draw_rate=("win", draw_rate),
                 mean_duration=("duration", "mean"),
                 resources_gathered=("resources_gathered_total", "mean"),
                 return_success=("resource_return_success_rate", "mean"),
@@ -742,8 +825,8 @@ def render_overview(episode_df: pd.DataFrame, summary_by_enemy: pd.DataFrame) ->
             x="enemy",
             y="win_rate",
             text="episodes",
-            hover_data=["mean_duration", "resources_gathered", "return_success", "units_killed"],
-            labels={"enemy": "Enemy", "win_rate": "Win rate"},
+            hover_data=["win_score", "draw_rate", "mean_duration", "resources_gathered", "return_success", "units_killed"],
+            labels={"enemy": "Enemy", "win_rate": "Win rate (draws excluded)"},
         )
         fig.update_yaxes(range=[0, 1])
         fig.update_layout(height=380, margin={"l": 8, "r": 8, "t": 28, "b": 8})
@@ -769,8 +852,7 @@ def render_overview(episode_df: pd.DataFrame, summary_by_enemy: pd.DataFrame) ->
         fig.update_layout(height=380, margin={"l": 8, "r": 8, "t": 28, "b": 8})
         st.plotly_chart(fig, use_container_width=True)
 
-    if not summary_by_enemy.empty:
-        st.dataframe(summary_by_enemy, use_container_width=True, hide_index=True)
+    st.dataframe(enemy_summary, use_container_width=True, hide_index=True)
 
 
 def render_key_statistics(episode_df: pd.DataFrame) -> None:
@@ -966,7 +1048,7 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
                     episodes=("episode_id", "count"),
                     win_score=("win", "mean"),
                     resources_gathered=("resources_gathered_total", "mean"),
-                    resources_returned=("resources_returned_total", "mean"),
+                    bank_increases=("resources_returned_total", "mean"),
                     return_success_rate=("resource_return_success_rate", "mean"),
                     units_produced=("units_produced_total", "mean"),
                 )
@@ -981,7 +1063,7 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
                     "episodes": st.column_config.NumberColumn("Episodes", format="%d"),
                     "win_score": st.column_config.NumberColumn("Win score", format="%.3f"),
                     "resources_gathered": st.column_config.NumberColumn("Resources gathered", format="%.3f"),
-                    "resources_returned": st.column_config.NumberColumn("Resources returned", format="%.3f"),
+                    "bank_increases": st.column_config.NumberColumn("Bank increases", format="%.3f"),
                     "return_success_rate": st.column_config.NumberColumn("Return success", format="%.3f"),
                     "units_produced": st.column_config.NumberColumn("Units produced", format="%.3f"),
                 },
@@ -1063,8 +1145,9 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
     with left:
         x_col = st.selectbox("X metric", numeric_cols, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value], index=0)
     with middle:
-        y_default = numeric_cols.index("win") if "win" in numeric_cols else min(1, len(numeric_cols) - 1)
-        y_col = st.selectbox("Y metric", numeric_cols, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value], index=y_default)
+        y_options = [col for col in numeric_cols if col != x_col]
+        y_default = y_options.index("win") if "win" in y_options else min(1, len(y_options) - 1)
+        y_col = st.selectbox("Y metric", y_options, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value], index=y_default)
     discrete_x = episode_df[x_col].nunique(dropna=True) <= min(12, max(3, len(episode_df) // 10))
     plot_options = ["Scatter", "Line", "Box", "Violin"]
     with right:
@@ -1210,10 +1293,8 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        if not selected_correlations.empty:
-            corr_plot_df = selected_correlations.copy()
-            if "enemy" in corr_plot_df.columns:
-                corr_plot_df = corr_plot_df[corr_plot_df["enemy"].astype(str).isin(["ALL", *episode_df["enemy"].astype(str).unique()])]
+        corr_plot_df = build_selected_correlations(episode_df)
+        if not corr_plot_df.empty:
             fig = px.bar(
                 corr_plot_df,
                 x="pearson_r",
@@ -1225,8 +1306,8 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
             fig.update_layout(height=480, margin={"l": 8, "r": 8, "t": 28, "b": 8})
             st.plotly_chart(fig, use_container_width=True)
     with col2:
-        if not matrix_df.empty:
-            matrix = matrix_df.set_index(matrix_df.columns[0]) if matrix_df.columns[0].startswith("Unnamed") else matrix_df.set_index(matrix_df.columns[0])
+        matrix = build_filtered_correlation_matrix(episode_df)
+        if not matrix.empty:
             fig = px.imshow(
                 matrix,
                 zmin=-1,
@@ -1497,8 +1578,9 @@ def render_episode_level_inference(episode_df: pd.DataFrame) -> None:
     elif test_family == "Correlation test":
         left, right = st.columns(2)
         x_col = left.selectbox("X metric", numeric_cols, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value], index=0, key="inference_correlation_x")
-        y_default = numeric_cols.index("win") if "win" in numeric_cols else min(1, len(numeric_cols) - 1)
-        y_col = right.selectbox("Y metric", numeric_cols, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value], index=y_default, key="inference_correlation_y")
+        y_options = [col for col in numeric_cols if col != x_col]
+        y_default = y_options.index("win") if "win" in y_options else min(1, len(y_options) - 1)
+        y_col = right.selectbox("Y metric", y_options, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value], index=y_default, key="inference_correlation_y")
         if st.button("Run test", type="primary", key="inference_run_correlation"):
             result_df = correlation_tests(episode_df, x_col, y_col)
             support_df = pd.DataFrame(
@@ -1653,7 +1735,7 @@ def main() -> None:
 
     with st.sidebar:
         data_dir = st.text_input("Precomputed stats directory", value=str(DEFAULT_DATA_DIR))
-        st.caption("Reads Parquet when present, otherwise CSV. Raw episode logs are not parsed here.")
+        st.caption("Reads Parquet tables by default, with CSV fallback for exported or legacy tables.")
 
     try:
         tables = load_episode_tables(data_dir)
