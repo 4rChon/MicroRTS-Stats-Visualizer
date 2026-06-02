@@ -742,9 +742,9 @@ def read_table(
     parquet_path = data_dir / f"{stem}.parquet"
     csv_path = data_dir / f"{stem}.csv"
     if parquet_path.exists():
-        return pd.read_parquet(parquet_path, columns=columns, filters=filters).copy()
+        return pd.read_parquet(parquet_path, columns=columns, filters=filters)
     if csv_path.exists():
-        df = pd.read_csv(csv_path, usecols=list(columns) if columns is not None else None).copy()
+        df = pd.read_csv(csv_path, usecols=list(columns) if columns is not None else None)
         if filters:
             for column, operator, values in filters:
                 if operator == "in" and column in df.columns:
@@ -767,9 +767,9 @@ def read_optional_table(data_dir: Path, stem: str) -> pd.DataFrame:
     parquet_path = data_dir / f"{stem}.parquet"
     csv_path = data_dir / f"{stem}.csv"
     if parquet_path.exists():
-        return pd.read_parquet(parquet_path).copy()
+        return pd.read_parquet(parquet_path)
     if csv_path.exists():
-        df = pd.read_csv(csv_path).copy()
+        df = pd.read_csv(csv_path)
         if stem == "correlation_matrix" and not df.empty:
             index_col = "metric" if "metric" in df.columns else df.columns[0]
             if index_col == "metric" or str(index_col).startswith("Unnamed:"):
@@ -821,7 +821,7 @@ def load_timeseries_table(
 ) -> pd.DataFrame:
     data_dir = Path(data_dir_text).expanduser()
     filters = [("episode_id", "in", list(episode_ids))] if episode_ids is not None else None
-    return read_table(data_dir, "timeseries", columns=columns, filters=filters).copy()
+    return read_table(data_dir, "timeseries", columns=columns, filters=filters)
 
 
 def require_columns(df: pd.DataFrame, columns: list[str], table_name: str) -> None:
@@ -2039,12 +2039,12 @@ def main() -> None:
         st.caption("Reads Parquet tables by default, with CSV fallback for exported or legacy tables.")
 
     try:
-        tables = {name: table.copy() for name, table in load_episode_tables(data_dir).items()}
+        tables = load_episode_tables(data_dir)
     except Exception as e:
         st.error(f"Could not load precomputed tables: {e}")
         st.stop()
 
-    episode_df = tables["episode"].copy()
+    episode_df = tables["episode"]
     require_columns(episode_df, ["episode_id", "enemy", "win", "duration"], "episode_summary")
 
     with st.sidebar:
