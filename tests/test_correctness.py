@@ -87,6 +87,12 @@ def test_true_win_rate_excludes_draws() -> None:
     assert values.mean() == 0.5
 
 
+def test_dashboard_stats_keep_available_order_without_duplicates() -> None:
+    stats = ["Overview", "Time Series", "Overview", "Methods"]
+
+    assert dashboard.normalize_stats(stats) == ["Overview", "Time Series", "Methods"]
+
+
 def test_normalized_time_series_is_episode_weighted() -> None:
     time_df = pd.DataFrame(
         {

@@ -418,21 +418,34 @@ def render_stat_guard(stat_name: str, renderer: Callable[[], None]) -> None:
         log_stat_end(stat_name, before)
 
 
-def select_stats(available_stats: list[str]) -> list[str]:
-    available_stats = sorted(set(available_stats))
-    previous = st.session_state.get("selected_stats_value", [])
-    default = [stat for stat in previous if stat in available_stats]
-    if not default and available_stats:
-        default = [available_stats[0]]
+def normalize_stats(available_stats: list[str]) -> list[str]:
+    """Return the dashboard sections in a stable, duplicate-free order."""
+    seen: set[str] = set()
+    stats: list[str] = []
+    for stat in available_stats:
+        if stat in seen:
+            continue
+        seen.add(stat)
+        stats.append(stat)
+    return stats
 
-    selected = st.multiselect(
-        "Stats to show",
-        options=available_stats,
-        default=default,
-    )
-    selected = [stat for stat in selected if stat in available_stats]
-    st.session_state["selected_stats_value"] = selected
-    return selected
+
+def render_stat_tabs(available_stats: list[str], renderers: dict[str, Callable[[], None]]) -> None:
+    """Render dashboard sections as top-level tabs instead of a sidebar picker."""
+    tab_names = normalize_stats(available_stats)
+    if not tab_names:
+        st.info("No stats are available for the current data set.")
+        return
+
+    st.caption("Stats to show")
+    tabs = st.tabs(tab_names)
+    for tab, stat_name in zip(tabs, tab_names, strict=True):
+        with tab:
+            renderer = renderers.get(stat_name)
+            if renderer is None:
+                st.warning(f"Skipping unavailable stat: {stat_name}")
+                continue
+            render_stat_guard(stat_name, renderer)
 
 
 def get_stat_dataframe(stats_df: pd.DataFrame | None, stat_name: str) -> pd.DataFrame | None:
@@ -2056,11 +2069,8 @@ def main() -> None:
         st.warning(f"Could not inspect time-series columns: {e}")
 
     available_stats = available_dashboard_stats(tables, timeseries_columns)
-    with st.sidebar:
-        selected_stats = select_stats(available_stats)
 
-    with st.expander("Debug: selected stats"):
-        st.write("Selected:", selected_stats)
+    with st.expander("Debug: available stats"):
         st.write("Available:", available_stats)
         st.write("Columns:", list(filtered_episode_df.columns))
         st.write("Shape:", filtered_episode_df.shape)
@@ -2076,16 +2086,7 @@ def main() -> None:
         "Episodes": lambda: render_episode_explorer(filtered_episode_df),
     }
 
-    if not selected_stats:
-        st.info("Select at least one stat to show.")
-        return
-
-    for stat_name in selected_stats:
-        renderer = renderers.get(stat_name)
-        if renderer is None:
-            st.warning(f"Skipping unavailable stat: {stat_name}")
-            continue
-        render_stat_guard(stat_name, renderer)
+    render_stat_tabs(available_stats, renderers)
 
 
 if __name__ == "__main__":
