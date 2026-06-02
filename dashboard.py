@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -368,6 +369,38 @@ st.set_page_config(
 
 def clean_label(value: str) -> str:
     return value.replace("_", " ").title()
+
+
+def option_picker(
+    container: Any,
+    label: str,
+    options: Sequence[str],
+    *,
+    index: int = 0,
+    format_func: Any = str,
+    key: str | None = None,
+    horizontal: bool = False,
+) -> str:
+    """Render a single-choice widget without Streamlit's selectbox frontend chunk.
+
+    Streamlit Cloud has intermittently failed to serve the dynamically imported
+    Selectbox JavaScript module, which leaves selectboxes stuck on their default
+    values. Radio buttons are statically loaded in this app and keep the same
+    single-choice behavior without relying on that failing chunk.
+    """
+    safe_options = list(options)
+    if not safe_options:
+        raise ValueError(f"No options available for {label!r}")
+
+    safe_index = min(max(index, 0), len(safe_options) - 1)
+    return container.radio(
+        label,
+        safe_options,
+        index=safe_index,
+        format_func=format_func,
+        key=key,
+        horizontal=horizontal,
+    )
 
 
 def format_number(value: float) -> str:
@@ -1158,10 +1191,12 @@ def render_time_series(data_dir: str, episode_ids: set[str]) -> None:
         return
 
     controls = st.columns([1.2, 1, 1, 1])
-    metric = controls[0].selectbox(
+    metric = option_picker(
+        controls[0],
         "Metric",
         available_metrics,
         format_func=lambda value: METRIC_LABELS.get(value, clean_label(value)),
+        key="time_series_metric",
     )
     x_mode = controls[1].segmented_control(
         "X axis",
@@ -1188,11 +1223,25 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
     numeric_cols = [col for col in EPISODE_SCATTER_COLUMNS if col in episode_df.columns]
 
     with left:
-        x_col = st.selectbox("X metric", numeric_cols, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value], index=0)
+        x_col = option_picker(
+            left,
+            "X metric",
+            numeric_cols,
+            format_func=lambda value: EPISODE_SCATTER_COLUMNS[value],
+            index=0,
+            key="correlation_x_metric",
+        )
     with middle:
         y_options = [col for col in numeric_cols if col != x_col]
         y_default = y_options.index("win") if "win" in y_options else min(1, len(y_options) - 1)
-        y_col = st.selectbox("Y metric", y_options, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value], index=y_default)
+        y_col = option_picker(
+            middle,
+            "Y metric",
+            y_options,
+            format_func=lambda value: EPISODE_SCATTER_COLUMNS[value],
+            index=y_default,
+            key="correlation_y_metric",
+        )
     discrete_x = episode_df[x_col].nunique(dropna=True) <= min(12, max(3, len(episode_df) // 10))
     plot_options = ["Scatter", "Line", "Box", "Violin"]
     with right:
@@ -1367,7 +1416,13 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
 
 def render_episode_explorer(episode_df: pd.DataFrame) -> None:
     cols = [col for col in EPISODE_SCATTER_COLUMNS if col in episode_df.columns]
-    metric = st.selectbox("Distribution metric", cols, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value])
+    metric = option_picker(
+        st,
+        "Distribution metric",
+        cols,
+        format_func=lambda value: EPISODE_SCATTER_COLUMNS[value],
+        key="episode_distribution_metric",
+    )
     fig = px.box(
         episode_df,
         x="enemy",
@@ -1530,7 +1585,8 @@ def render_episode_level_inference(episode_df: pd.DataFrame) -> None:
     numeric_cols = [col for col in EPISODE_SCATTER_COLUMNS if col in episode_df.columns]
     st.caption("Inference tests use filtered episode-level rows only. Timestep rows are not treated as independent observations.")
 
-    test_family = st.selectbox(
+    test_family = option_picker(
+        st,
         "Test family",
         [
             "Win rate by enemy",
@@ -1571,7 +1627,13 @@ def render_episode_level_inference(episode_df: pd.DataFrame) -> None:
         if st.button("Run test", type="primary", key="inference_run_win_rate_by_enemy"):
             result_df, support_df = chi_square_win_by_enemy(episode_df)
     elif test_family == "Metric by outcome":
-        metric = st.selectbox("Metric", numeric_cols, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value], key="inference_metric_by_outcome")
+        metric = option_picker(
+            st,
+            "Metric",
+            numeric_cols,
+            format_func=lambda value: EPISODE_SCATTER_COLUMNS[value],
+            key="inference_metric_by_outcome",
+        )
         if st.button("Run test", type="primary", key="inference_run_metric_by_outcome"):
             result_df = compare_metric_by_outcome(episode_df, metric)
             support_df = (
@@ -1597,7 +1659,13 @@ def render_episode_level_inference(episode_df: pd.DataFrame) -> None:
             fig.update_layout(height=380, margin={"l": 8, "r": 8, "t": 28, "b": 8}, showlegend=False)
             st.plotly_chart(fig, width="stretch")
     elif test_family == "Metric by enemy":
-        metric = st.selectbox("Metric", numeric_cols, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value], key="inference_metric_by_enemy")
+        metric = option_picker(
+            st,
+            "Metric",
+            numeric_cols,
+            format_func=lambda value: EPISODE_SCATTER_COLUMNS[value],
+            key="inference_metric_by_enemy",
+        )
         if st.button("Run test", type="primary", key="inference_run_metric_by_enemy"):
             result_df = compare_metric_by_enemy(episode_df, metric)
             support_df = (
@@ -1622,10 +1690,24 @@ def render_episode_level_inference(episode_df: pd.DataFrame) -> None:
             st.plotly_chart(fig, width="stretch")
     elif test_family == "Correlation test":
         left, right = st.columns(2)
-        x_col = left.selectbox("X metric", numeric_cols, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value], index=0, key="inference_correlation_x")
+        x_col = option_picker(
+            left,
+            "X metric",
+            numeric_cols,
+            format_func=lambda value: EPISODE_SCATTER_COLUMNS[value],
+            index=0,
+            key="inference_correlation_x",
+        )
         y_options = [col for col in numeric_cols if col != x_col]
         y_default = y_options.index("win") if "win" in y_options else min(1, len(y_options) - 1)
-        y_col = right.selectbox("Y metric", y_options, format_func=lambda value: EPISODE_SCATTER_COLUMNS[value], index=y_default, key="inference_correlation_y")
+        y_col = option_picker(
+            right,
+            "Y metric",
+            y_options,
+            format_func=lambda value: EPISODE_SCATTER_COLUMNS[value],
+            index=y_default,
+            key="inference_correlation_y",
+        )
         if st.button("Run test", type="primary", key="inference_run_correlation"):
             result_df = correlation_tests(episode_df, x_col, y_col)
             support_df = pd.DataFrame(
@@ -1649,7 +1731,8 @@ def render_episode_level_inference(episode_df: pd.DataFrame) -> None:
             fig.update_layout(height=380, margin={"l": 8, "r": 8, "t": 28, "b": 8})
             st.plotly_chart(fig, width="stretch")
     else:
-        metric = st.selectbox(
+        metric = option_picker(
+            st,
             "Predictor metric",
             [col for col in numeric_cols if col != "win"],
             format_func=lambda value: EPISODE_SCATTER_COLUMNS[value],
@@ -1697,16 +1780,28 @@ def render_trajectory_inference(data_dir: str, episode_ids: set[str]) -> None:
 
     default_metric = numeric_cols.index("army_value") if "army_value" in numeric_cols else 0
     controls = st.columns([1.2, 0.9, 0.8, 0.9, 0.8])
-    metric = controls[0].selectbox(
+    metric = option_picker(
+        controls[0],
         "Metric",
         numeric_cols,
         index=default_metric,
         format_func=lambda value: METRIC_LABELS.get(value, clean_label(value)),
         key="trajectory_metric",
     )
-    grouping = controls[1].selectbox("Group by", ["Outcome", "Enemy"], key="trajectory_grouping")
+    grouping = option_picker(
+        controls[1],
+        "Group by",
+        ["Outcome", "Enemy"],
+        key="trajectory_grouping",
+        horizontal=True,
+    )
     bins = controls[2].slider("Progress bins", 5, 30, 10, key="trajectory_bins")
-    summary = controls[3].selectbox("Bin summary", TRAJECTORY_SUMMARIES, key="trajectory_summary")
+    summary = option_picker(
+        controls[3],
+        "Bin summary",
+        TRAJECTORY_SUMMARIES,
+        key="trajectory_summary",
+    )
     apply_fdr = controls[4].toggle("FDR correction", value=True, key="trajectory_fdr")
 
     if st.button("Run trajectory inference", type="primary", key="trajectory_run"):
