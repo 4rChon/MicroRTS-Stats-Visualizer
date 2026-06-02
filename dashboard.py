@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import pyarrow.parquet as pq
 import streamlit as st
 
 from inference import (
@@ -593,13 +594,34 @@ def add_regression_lines(fig: go.Figure, df: pd.DataFrame, x_col: str, y_col: st
         )
 
 
-def read_table(data_dir: Path, stem: str) -> pd.DataFrame:
+def read_table(
+    data_dir: Path,
+    stem: str,
+    *,
+    columns: list[str] | tuple[str, ...] | None = None,
+    filters: list[tuple[str, str, list[str]]] | None = None,
+) -> pd.DataFrame:
     parquet_path = data_dir / f"{stem}.parquet"
     csv_path = data_dir / f"{stem}.csv"
     if parquet_path.exists():
-        return pd.read_parquet(parquet_path)
+        return pd.read_parquet(parquet_path, columns=columns, filters=filters)
     if csv_path.exists():
-        return pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path, usecols=list(columns) if columns is not None else None)
+        if filters:
+            for column, operator, values in filters:
+                if operator == "in" and column in df.columns:
+                    df = df[df[column].isin(values)]
+        return df
+    raise FileNotFoundError(f"Missing {stem}.parquet or {stem}.csv in {data_dir}")
+
+
+def get_table_columns(data_dir: Path, stem: str) -> list[str]:
+    parquet_path = data_dir / f"{stem}.parquet"
+    csv_path = data_dir / f"{stem}.csv"
+    if parquet_path.exists():
+        return pq.ParquetFile(parquet_path).schema.names
+    if csv_path.exists():
+        return pd.read_csv(csv_path, nrows=0).columns.tolist()
     raise FileNotFoundError(f"Missing {stem}.parquet or {stem}.csv in {data_dir}")
 
 
@@ -647,10 +669,21 @@ def load_episode_tables(data_dir_text: str) -> dict[str, pd.DataFrame]:
     }
 
 
-@st.cache_data(show_spinner="Loading time series data...")
-def load_timeseries_table(data_dir_text: str) -> pd.DataFrame:
+@st.cache_data(show_spinner=False)
+def load_timeseries_columns(data_dir_text: str) -> list[str]:
     data_dir = Path(data_dir_text).expanduser()
-    return read_table(data_dir, "timeseries")
+    return get_table_columns(data_dir, "timeseries")
+
+
+@st.cache_data(show_spinner="Loading time series data...")
+def load_timeseries_table(
+    data_dir_text: str,
+    columns: tuple[str, ...] | None = None,
+    episode_ids: tuple[str, ...] | None = None,
+) -> pd.DataFrame:
+    data_dir = Path(data_dir_text).expanduser()
+    filters = [("episode_id", "in", list(episode_ids))] if episode_ids is not None else None
+    return read_table(data_dir, "timeseries", columns=columns, filters=filters)
 
 
 def require_columns(df: pd.DataFrame, columns: list[str], table_name: str) -> None:
@@ -1117,8 +1150,13 @@ def render_key_statistics(episode_df: pd.DataFrame) -> None:
         )
 
 
-def render_time_series(time_df: pd.DataFrame) -> None:
-    available_metrics = [metric for metric in METRIC_LABELS if metric in time_df.columns]
+def render_time_series(data_dir: str, episode_ids: set[str]) -> None:
+    timeseries_columns = load_timeseries_columns(data_dir)
+    available_metrics = [metric for metric in METRIC_LABELS if metric in timeseries_columns]
+    if not available_metrics:
+        st.warning("No time-series metrics are available for the current data directory.")
+        return
+
     controls = st.columns([1.2, 1, 1, 1])
     metric = controls[0].selectbox(
         "Metric",
@@ -1132,6 +1170,13 @@ def render_time_series(time_df: pd.DataFrame) -> None:
     )
     cumulative = controls[2].toggle("Cumulative", value=metric.endswith(("gathered", "returned", "spent", "dealt", "taken", "produced", "lost", "killed")))
     bins = controls[3].slider("Progress bins", 10, 100, 50, disabled=x_mode == "Timesteps")
+
+    required_columns = ("episode_id", "enemy", "t", "progress", metric)
+    time_df = load_timeseries_table(data_dir, required_columns, tuple(sorted(episode_ids)))
+    require_columns(time_df, list(required_columns), "timeseries")
+    if time_df.empty:
+        st.warning("No time-series rows match the current filters.")
+        return
 
     metric_label = METRIC_LABELS.get(metric, clean_label(metric))
     agg = aggregate_time_series(time_df, metric, x_mode, cumulative, bins)
@@ -1638,17 +1683,14 @@ def render_episode_level_inference(episode_df: pd.DataFrame) -> None:
         st.dataframe(support_df, width="stretch", hide_index=True)
 
 
-def render_trajectory_inference(time_df: pd.DataFrame) -> None:
+def render_trajectory_inference(data_dir: str, episode_ids: set[str]) -> None:
     st.caption(
         "Trajectory inference summarizes each episode inside normalized progress bins before testing. "
         "Raw timestep rows are not treated as independent observations."
     )
 
-    numeric_cols = [
-        col
-        for col in METRIC_LABELS
-        if col in time_df.columns and pd.api.types.is_numeric_dtype(time_df[col])
-    ]
+    timeseries_columns = load_timeseries_columns(data_dir)
+    numeric_cols = [col for col in METRIC_LABELS if col in timeseries_columns]
     if not numeric_cols:
         st.warning("No numeric time-series metrics are available for trajectory inference.")
         return
@@ -1668,6 +1710,13 @@ def render_trajectory_inference(time_df: pd.DataFrame) -> None:
     apply_fdr = controls[4].toggle("FDR correction", value=True, key="trajectory_fdr")
 
     if st.button("Run trajectory inference", type="primary", key="trajectory_run"):
+        required_columns = ("episode_id", "enemy", "win", "t", "progress", metric)
+        time_df = load_timeseries_table(data_dir, required_columns, tuple(sorted(episode_ids)))
+        require_columns(time_df, list(required_columns), "timeseries")
+        if time_df.empty:
+            st.warning("No time-series rows match the current filters.")
+            return
+
         try:
             trajectory_df = build_trajectory_summary(time_df, metric=metric, bins=bins, summary=summary)
         except Exception as e:
@@ -1709,10 +1758,7 @@ def render_inference(episode_df: pd.DataFrame, data_dir: str, episode_ids: set) 
     if inference_mode == "Episode-level":
         render_episode_level_inference(episode_df)
     else:
-        time_df = load_timeseries_table(data_dir)
-        require_columns(time_df, ["episode_id", "enemy", "t", "progress"], "timeseries")
-        time_df = time_df[time_df["episode_id"].isin(episode_ids)].copy()
-        render_trajectory_inference(time_df)
+        render_trajectory_inference(data_dir, episode_ids)
 
 
 def main() -> None:
@@ -1773,10 +1819,7 @@ def main() -> None:
     elif active_view == "Key Statistics":
         render_key_statistics(filtered_episode_df)
     elif active_view == "Time Series":
-        time_df = load_timeseries_table(data_dir)
-        require_columns(time_df, ["episode_id", "enemy", "t", "progress"], "timeseries")
-        filtered_time_df = time_df[time_df["episode_id"].isin(episode_ids)].copy()
-        render_time_series(filtered_time_df)
+        render_time_series(data_dir, episode_ids)
     elif active_view == "Correlations":
         render_correlations(filtered_episode_df, tables["selected_correlations"], tables["correlation_matrix"])
     elif active_view == "Inference":
