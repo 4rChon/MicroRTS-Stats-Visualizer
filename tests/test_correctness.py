@@ -93,6 +93,19 @@ def test_dashboard_stats_keep_available_order_without_duplicates() -> None:
     assert dashboard.normalize_stats(stats) == ["Overview", "Time Series", "Methods"]
 
 
+def test_dashboard_memory_limit_can_be_increased() -> None:
+    original_limit = dashboard.MAX_SAFE_MB
+    try:
+        assert dashboard.configure_memory_limit(4096) == 4096
+        assert dashboard.MAX_SAFE_MB == 4096
+    finally:
+        dashboard.configure_memory_limit(original_limit)
+
+
+def test_dashboard_memory_limit_falls_back_to_default_for_missing_value() -> None:
+    assert dashboard.normalize_memory_limit_mb(None) == dashboard.DEFAULT_MAX_SAFE_MB
+
+
 def test_normalized_time_series_is_episode_weighted() -> None:
     time_df = pd.DataFrame(
         {
