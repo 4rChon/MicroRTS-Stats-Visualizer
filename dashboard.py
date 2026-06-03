@@ -979,6 +979,43 @@ def table_csv(data: pd.DataFrame, *, include_index: bool = False) -> str:
     return data.to_csv(index=include_index)
 
 
+def csv_file_part(value: str) -> str:
+    sanitized = "".join(char if char.isalnum() else "_" for char in value.lower()).strip("_")
+    return sanitized or "metric"
+
+
+def build_correlation_chart_download_data(
+    data: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    plot_kind: str,
+    *,
+    bin_col: str | None = None,
+    x_value_col: str | None = None,
+) -> pd.DataFrame:
+    metric_metadata = {
+        "plot_type": plot_kind,
+        "x_metric": x_col,
+        "x_metric_label": EPISODE_SCATTER_COLUMNS.get(x_col, x_col),
+        "y_metric": y_col,
+        "y_metric_label": EPISODE_SCATTER_COLUMNS.get(y_col, y_col),
+    }
+    if {"y_mean", "n"}.issubset(data.columns):
+        available_cols = list(data.columns)
+    else:
+        available_cols = ["episode_id", "enemy", "result", "duration"]
+        if x_value_col and x_value_col in data.columns:
+            available_cols.append(x_value_col)
+        if bin_col and bin_col not in {x_col, y_col} and bin_col in data.columns:
+            available_cols.append(bin_col)
+        available_cols.extend([x_col, y_col])
+        available_cols = list(dict.fromkeys(col for col in available_cols if col in data.columns))
+    download_df = data[available_cols].copy()
+    for col, value in reversed(metric_metadata.items()):
+        download_df.insert(0, col, value)
+    return download_df
+
+
 def download_dynamic_table_csv(
     data: pd.DataFrame,
     label: str,
@@ -1497,6 +1534,8 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
 
     labels = {x_col: EPISODE_SCATTER_COLUMNS[x_col], y_col: EPISODE_SCATTER_COLUMNS[y_col]}
     hover_data = ["episode_id", "duration", "result"]
+    chart_download_df: pd.DataFrame | None = None
+    chart_download_x_value_col: str | None = None
     plot_df = episode_df.copy()
     plot_df[x_col] = pd.to_numeric(plot_df[x_col], errors="coerce")
     plot_df[y_col] = pd.to_numeric(plot_df[y_col], errors="coerce")
@@ -1552,6 +1591,8 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
             grouped["sem"] = grouped["y_std"].fillna(0.0) / np.sqrt(grouped["n"].clip(lower=1))
             grouped["ci_low"] = grouped["y_mean"] - 1.96 * grouped["sem"]
             grouped["ci_high"] = grouped["y_mean"] + 1.96 * grouped["sem"]
+            chart_download_df = grouped
+            chart_download_x_value_col = x_line_col
             fig = px.line(
                 grouped,
                 x=x_line_col,
@@ -1592,6 +1633,8 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
             if use_binned_x:
                 fig.update_xaxes(type="category")
         elif plot_kind == "Box":
+            chart_download_df = plot_df
+            chart_download_x_value_col = bin_col
             plot_df = cap_plot_df(plot_df, f"{EPISODE_SCATTER_COLUMNS[y_col]} by {EPISODE_SCATTER_COLUMNS[x_col]}")
             fig = px.box(
                 plot_df,
@@ -1603,6 +1646,8 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
                 labels=labels,
             )
         else:
+            chart_download_df = plot_df
+            chart_download_x_value_col = bin_col
             plot_df = cap_plot_df(plot_df, f"{EPISODE_SCATTER_COLUMNS[y_col]} by {EPISODE_SCATTER_COLUMNS[x_col]}")
             fig = px.violin(
                 plot_df,
@@ -1618,6 +1663,8 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
     else:
         corr = pearsonr_safe(plot_df[x_col], plot_df[y_col])
         st.metric("Pearson r", format_number(corr))
+        chart_download_df = plot_df
+        chart_download_x_value_col = x_col
         plot_df = cap_plot_df(plot_df, f"{EPISODE_SCATTER_COLUMNS[x_col]} vs {EPISODE_SCATTER_COLUMNS[y_col]}")
         fig = px.scatter(
             plot_df,
@@ -1630,6 +1677,24 @@ def render_correlations(episode_df: pd.DataFrame, selected_correlations: pd.Data
         add_regression_lines(fig, plot_df, x_col, y_col)
     fig.update_layout(height=470, margin={"l": 8, "r": 8, "t": 28, "b": 8})
     st.plotly_chart(fig, width="stretch")
+    if chart_download_df is not None:
+        download_dynamic_table_csv(
+            build_correlation_chart_download_data(
+                chart_download_df,
+                x_col,
+                y_col,
+                plot_kind,
+                bin_col=bin_col,
+                x_value_col=chart_download_x_value_col,
+            ),
+            "Download chart CSV",
+            (
+                "dynamic_correlation_"
+                f"{csv_file_part(x_col)}_vs_{csv_file_part(y_col)}_"
+                f"{csv_file_part(plot_kind)}.csv"
+            ),
+            key="download_dynamic_correlation_chart_csv",
+        )
 
     col1, col2 = st.columns([1, 1])
     with col1:

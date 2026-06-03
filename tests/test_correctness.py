@@ -232,3 +232,51 @@ def test_table_csv_can_include_dataframe_index() -> None:
 
     assert dashboard.table_csv(df, include_index=False) == "value\n1.5\n2.5\n"
     assert dashboard.table_csv(df, include_index=True) == "metric,value\na,1.5\nb,2.5\n"
+
+
+def test_correlation_chart_download_data_includes_metric_metadata() -> None:
+    df = pd.DataFrame(
+        {
+            "episode_id": ["e1"],
+            "enemy": ["bot"],
+            "result": ["Win"],
+            "duration": [100],
+            "resources_gathered_total_bin": ["(0, 10]"],
+            "resources_gathered_total": [10.0],
+            "win": [1.0],
+        }
+    )
+
+    result = dashboard.build_correlation_chart_download_data(
+        df,
+        "resources_gathered_total",
+        "win",
+        "Box",
+        bin_col="resources_gathered_total_bin",
+        x_value_col="resources_gathered_total_bin",
+    )
+
+    assert result.iloc[0]["plot_type"] == "Box"
+    assert result.iloc[0]["x_metric_label"] == "Resources gathered"
+    assert result.iloc[0]["y_metric_label"] == "Win score"
+    assert result.iloc[0]["resources_gathered_total_bin"] == "(0, 10]"
+
+
+def test_correlation_chart_download_data_keeps_line_aggregates() -> None:
+    df = pd.DataFrame(
+        {
+            "enemy": ["bot"],
+            "resources_gathered_total": [10.0],
+            "y_mean": [0.75],
+            "y_median": [0.5],
+            "n": [4],
+            "ci_low": [0.25],
+            "ci_high": [1.0],
+        }
+    )
+
+    result = dashboard.build_correlation_chart_download_data(df, "resources_gathered_total", "win", "Line")
+
+    assert result.iloc[0]["plot_type"] == "Line"
+    assert result.iloc[0]["y_mean"] == 0.75
+    assert result.iloc[0]["n"] == 4
