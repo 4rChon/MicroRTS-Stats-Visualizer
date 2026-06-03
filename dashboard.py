@@ -26,7 +26,8 @@ from inference import (
 
 
 DEFAULT_DATA_DIR = Path("stats_viz")
-MAX_SAFE_MB = 1800
+DEFAULT_MAX_SAFE_MB = 1800
+MAX_SAFE_MB = DEFAULT_MAX_SAFE_MB
 MAX_POINTS = 20_000
 PROCESS = psutil.Process(os.getpid())
 
@@ -376,6 +377,20 @@ st.set_page_config(
 def mem_mb() -> float:
     """Return the current process RSS in MiB for Streamlit Cloud diagnostics."""
     return PROCESS.memory_info().rss / 1024 / 1024
+
+
+def normalize_memory_limit_mb(value: int | float | None) -> int:
+    """Return a positive integer memory ceiling in MiB for dashboard guardrails."""
+    if value is None:
+        return DEFAULT_MAX_SAFE_MB
+    return max(1, int(value))
+
+
+def configure_memory_limit(limit_mb: int | float | None) -> int:
+    """Update the process-wide dashboard memory ceiling and return the normalized limit."""
+    global MAX_SAFE_MB
+    MAX_SAFE_MB = normalize_memory_limit_mb(limit_mb)
+    return MAX_SAFE_MB
 
 
 def abort_if_memory_high(where: str) -> None:
@@ -2159,6 +2174,18 @@ def main() -> None:
     with st.sidebar:
         data_dir = st.text_input("Precomputed stats directory", value=str(DEFAULT_DATA_DIR))
         st.caption("Reads Parquet tables by default, with CSV fallback for exported or legacy tables.")
+        memory_limit_mb = st.number_input(
+            "Memory abort limit (MiB)",
+            min_value=1,
+            value=MAX_SAFE_MB,
+            step=100,
+            help=(
+                "Raise this limit when running the dashboard in an environment with more available memory. "
+                "The dashboard stops rendering a section when the current Python process exceeds this ceiling."
+            ),
+        )
+        configured_memory_limit = configure_memory_limit(memory_limit_mb)
+        st.caption(f"Current process memory: {mem_mb():.1f} MiB / {configured_memory_limit} MiB limit.")
 
     try:
         tables = load_episode_tables(data_dir)
